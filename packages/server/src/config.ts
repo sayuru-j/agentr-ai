@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export interface ServerConfig {
   microsoftAppId: string;
@@ -10,6 +12,8 @@ export interface ServerConfig {
   mockMode: boolean;
   /** Public HTTPS origin for artifact URLs, e.g. https://agent.example.com */
   publicBaseUrl: string;
+  /** Directory for persisted session data (pairing). */
+  dataDir: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -26,6 +30,12 @@ export function loadConfig(): ServerConfig {
     (domain ? `https://${domain}` : `http://127.0.0.1:${process.env.HTTP_PORT ?? 3000}`)
   ).replace(/\/$/, "");
 
+  const dataDir =
+    (process.env.AGENTR_DATA_DIR ?? "").trim() ||
+    (process.platform === "win32"
+      ? join(homedir(), ".agent-relay-server")
+      : "/var/lib/agent-relay");
+
   return {
     microsoftAppId,
     microsoftAppPassword,
@@ -35,5 +45,6 @@ export function loadConfig(): ServerConfig {
     wsPort: Number(process.env.WS_PORT ?? 8080),
     mockMode,
     publicBaseUrl,
+    dataDir,
   };
 }

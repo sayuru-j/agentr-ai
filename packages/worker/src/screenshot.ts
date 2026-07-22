@@ -1,6 +1,8 @@
 import { Jimp } from "jimp";
 import screenshot from "screenshot-desktop";
 
+export type ScreenshotQuality = "preview" | "hq";
+
 export interface CapturedScreen {
   name: string;
   label: string;
@@ -8,14 +10,18 @@ export interface CapturedScreen {
   buffer: Buffer;
 }
 
-const MAX_WIDTH = 1600;
-const JPEG_QUALITY = 72;
+const PREVIEW_MAX_WIDTH = 1600;
+const PREVIEW_JPEG_QUALITY = 72;
+const HQ_JPEG_QUALITY = 98;
 
 /**
- * Capture every display as a compressed JPEG suitable for Teams.
- * Falls back to primary display if `all()` is unavailable.
+ * Capture every display.
+ * - preview: downscaled JPEG for fast Teams previews
+ * - hq: native resolution, high-quality JPEG (no downscale)
  */
-export async function captureAllDisplays(): Promise<CapturedScreen[]> {
+export async function captureAllDisplays(
+  quality: ScreenshotQuality = "preview",
+): Promise<CapturedScreen[]> {
   let pngs: Buffer[];
   try {
     const all = await screenshot.all();
@@ -31,7 +37,8 @@ export async function captureAllDisplays(): Promise<CapturedScreen[]> {
   const out: CapturedScreen[] = [];
   for (let i = 0; i < pngs.length; i++) {
     const png = pngs[i]!;
-    const jpeg = await compressPngToJpeg(png);
+    const jpeg =
+      quality === "hq" ? await toHqJpeg(png) : await toPreviewJpeg(png);
     const n = i + 1;
     out.push({
       name: `screen-${n}.jpg`,
@@ -43,10 +50,19 @@ export async function captureAllDisplays(): Promise<CapturedScreen[]> {
   return out;
 }
 
-async function compressPngToJpeg(png: Buffer): Promise<Buffer> {
+async function toPreviewJpeg(png: Buffer): Promise<Buffer> {
   const image = await Jimp.read(png);
-  if (image.width > MAX_WIDTH) {
-    image.resize({ w: MAX_WIDTH });
+  if (image.width > PREVIEW_MAX_WIDTH) {
+    image.resize({ w: PREVIEW_MAX_WIDTH });
   }
-  return Buffer.from(await image.getBuffer("image/jpeg", { quality: JPEG_QUALITY }));
+  return Buffer.from(
+    await image.getBuffer("image/jpeg", { quality: PREVIEW_JPEG_QUALITY }),
+  );
+}
+
+async function toHqJpeg(png: Buffer): Promise<Buffer> {
+  const image = await Jimp.read(png);
+  return Buffer.from(
+    await image.getBuffer("image/jpeg", { quality: HQ_JPEG_QUALITY }),
+  );
 }

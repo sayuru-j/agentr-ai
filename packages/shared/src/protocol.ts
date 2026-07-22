@@ -41,6 +41,7 @@ export type TaskCreate = z.infer<typeof TaskCreateSchema>;
 export const ScreenshotCaptureSchema = z.object({
   type: z.literal("screenshot.capture"),
   requestId: z.string(),
+  quality: z.enum(["preview", "hq"]),
 });
 export type ScreenshotCapture = z.infer<typeof ScreenshotCaptureSchema>;
 

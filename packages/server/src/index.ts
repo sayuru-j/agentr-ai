@@ -5,7 +5,7 @@ import { ArtifactStore } from "./artifacts.js";
 import { requireWorkerToken } from "./auth-http.js";
 import { AgentRelayBot } from "./bot.js";
 import { loadConfig } from "./config.js";
-import { SessionStore } from "./store.js";
+import { SessionStore, defaultSessionPath } from "./store.js";
 import { WorkerHub } from "./ws-hub.js";
 
 async function main(): Promise<void> {
@@ -24,7 +24,8 @@ async function main(): Promise<void> {
     );
   }
 
-  const store = new SessionStore();
+  const store = new SessionStore(defaultSessionPath(config.dataDir));
+  console.log(`[server] Session data: ${config.dataDir}`);
   const artifacts = new ArtifactStore(config.publicBaseUrl);
   artifacts.cleanup();
   const hub = new WorkerHub(config, store);

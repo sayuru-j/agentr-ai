@@ -40,7 +40,7 @@ export function buildTaskCard(opts: {
   const body: Record<string, unknown>[] = [
     {
       type: "TextBlock",
-      text: `${statusEmoji[opts.status]} AgentRelay Task`,
+      text: `${statusEmoji[opts.status]} AgentR Task`,
       weight: "Bolder",
       size: "Medium",
     },
@@ -140,6 +140,84 @@ export function buildScreenshotCard(opts: {
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.4",
     body,
+  };
+}
+
+export function buildHelpCard() {
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "AgentR commands",
+        weight: "Bolder",
+        size: "Medium",
+      },
+      {
+        type: "TextBlock",
+        text: "Only messages starting with `!` or `/` are handled. Normal chat is ignored.",
+        wrap: true,
+        isSubtle: true,
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "/pair", value: "`/pair <code>` — link this Teams user" },
+          { title: "/unpair", value: "Disconnect this Teams user" },
+          { title: "/whoami", value: "Show pairing and worker identity" },
+          { title: "/projects", value: "List project aliases" },
+          { title: "/status", value: "Worker connection status" },
+          { title: "/ss", value: "Preview screenshots (all monitors)" },
+          { title: "/sshq", value: "High-quality screenshots (all monitors)" },
+          { title: "/cancel", value: "Cancel the running agent task" },
+          { title: "/help", value: "This help card" },
+          {
+            title: "Task",
+            value: "`!alias your prompt` — e.g. `!sample fix the bug`",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export function buildStatusCard(opts: {
+  paired: boolean;
+  workerOnline: boolean;
+  hostname?: string;
+  version?: string;
+  projects: string[];
+}) {
+  const workerLabel = opts.workerOnline
+    ? opts.hostname
+      ? `${opts.hostname}${opts.version ? ` (v${opts.version})` : ""}`
+      : "online"
+    : "offline";
+  const projects =
+    opts.projects.length > 0 ? opts.projects.join(", ") : "(none)";
+
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "AgentR status",
+        weight: "Bolder",
+        size: "Medium",
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "Paired", value: opts.paired ? "yes" : "no" },
+          { title: "Worker", value: workerLabel },
+          { title: "Projects", value: projects },
+        ],
+      },
+    ],
   };
 }
 

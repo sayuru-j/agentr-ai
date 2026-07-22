@@ -231,7 +231,10 @@ export class AgentRelayWorker {
         await this.runTask(msg.taskId, msg.prompt, msg.projectAlias);
         break;
       case "screenshot.capture":
-        await this.handleScreenshotCapture(msg.requestId);
+        await this.handleScreenshotCapture(
+          msg.requestId,
+          msg.quality === "hq" ? "hq" : "preview",
+        );
         break;
       case "task.approval_response": {
         const pending = this.pendingApprovals.get(msg.approvalId);
@@ -346,11 +349,17 @@ export class AgentRelayWorker {
     });
   }
 
-  private async handleScreenshotCapture(requestId: string): Promise<void> {
+  private async handleScreenshotCapture(
+    requestId: string,
+    quality: "preview" | "hq",
+  ): Promise<void> {
     this.setStatus("busy");
     try {
-      const screens = await captureAllDisplays();
-      this.emit("log", `Screenshot request ${requestId.slice(0, 8)} — ${screens.length} display(s)`);
+      const screens = await captureAllDisplays(quality);
+      this.emit(
+        "log",
+        `Screenshot ${quality} ${requestId.slice(0, 8)} — ${screens.length} display(s)`,
+      );
       const result = await uploadScreenshotsHttps({
         relayUrl: this.config.relayUrl,
         workerToken: this.config.workerToken,

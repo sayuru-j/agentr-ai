@@ -12,7 +12,7 @@ import {
   type Activity,
 } from "botbuilder";
 import { randomUUID } from "node:crypto";
-import { buildApprovalCard, buildTaskCard } from "./cards.js";
+import { buildApprovalCard, buildHelpCard, buildStatusCard, buildTaskCard } from "./cards.js";
 import type { ServerConfig } from "./config.js";
 import type { ArtifactStore } from "./artifacts.js";
 import type { SessionStore, TaskRecord } from "./store.js";
@@ -55,7 +55,7 @@ export class AgentRelayBot {
     this.adapter = new CloudAdapter(auth);
     this.adapter.onTurnError = async (context, error) => {
       console.error("[bot] turn error", error);
-      await context.sendActivity("AgentRelay hit an error processing that message.");
+      await context.sendActivity("AgentR hit an error processing that message.");
     };
   }
 
@@ -101,15 +101,14 @@ export class AgentRelayBot {
   }
 
   private async handleMessage(context: TurnContext): Promise<void> {
-    // Strip Teams @bot mention so "@AgentR @sample …" still parses as @sample.
     TurnContext.removeRecipientMention(context.activity);
     const text = (context.activity.text ?? "")
       .replace(/<\/?at>/gi, "")
       .trim();
     if (!text) return;
 
-    // Only respond to slash commands and @alias prompts — ignore normal chat.
-    if (!text.startsWith("@") && !text.startsWith("/")) {
+    // Only respond to slash commands and !alias prompts.
+    if (!text.startsWith("!") && !text.startsWith("/")) {
       return;
     }
 
@@ -119,117 +118,127 @@ export class AgentRelayBot {
     if (lower.startsWith("/pair")) {
       const code = text.slice(5).trim();
       if (!code) {
-        await context.sendActivity("Usage: `/pair <code>`");
+        await context.sendActivity("Usage: `/pair <code>` — copy the code from the AgentR tray.");
         return;
       }
       if (this.store.pair(userId, code)) {
-        await context.sendActivity(
-          "Paired successfully. Send `@alias your prompt`, or `/ss` for a desktop screenshot. AgentR ignores normal chat.",
-        );
+        await context.sendActivity("Paired. Use `!alias your prompt`, `/ss`, or `/sshq`.");
       } else {
-        await context.sendActivity(
-          "Invalid pairing code. Check the code shown in the tray app / worker logs.",
-        );
+        await context.sendActivity("Invalid pairing code. Check the AgentR tray and try again.");
       }
       return;
     }
 
-    if (lower === "/ss" || lower.startsWith("/ss ")) {
-      if (!this.store.isPaired(userId)) {
-        await context.sendActivity(
-          "Not paired. Open the tray app for a pairing code, then send `/pair <code>`.",
-        );
-        return;
+    if (lower === "/unpair") {
+      if (this.store.unpair(userId)) {
+        await context.sendActivity("Unpaired.");
+      } else {
+        await context.sendActivity("You were not paired.");
       }
-      const worker = this.store.getWorker();
-      if (!worker) {
-        await context.sendActivity("Worker is offline. Start the tray app on your PC.");
-        return;
-      }
-
-      const requestId = randomUUID();
-      const conversation = {
-        serviceUrl: context.activity.serviceUrl,
-        conversationId: context.activity.conversation.id,
-        activityId: context.activity.id,
-        tenantId: context.activity.conversation.tenantId,
-      };
-      this.store.createTask({
-        taskId: requestId,
-        threadId: conversation.conversationId,
-        prompt: "Desktop screenshots",
-        conversation,
-      });
-
-      const ok = this.hub.send({
-        type: "screenshot.capture",
-        requestId,
-      });
-      if (!ok) {
-        await context.sendActivity("Worker disconnected — could not request screenshots.");
-        return;
-      }
-      await context.sendActivity("Capturing desktop screenshots…");
-      return;
-    }
-
-    if (lower === "/projects" || lower === "/status") {
-      const worker = this.store.getWorker();
-      if (!worker) {
-        await context.sendActivity("No worker connected.");
-        return;
-      }
-      const repos =
-        worker.repos.length > 0 ? worker.repos.join(", ") : "(none configured)";
-      await context.sendActivity(
-        `Worker **${worker.hostname}** v${worker.version}\nProjects: ${repos}\nPaired: ${this.store.isPaired(userId) ? "yes" : "no"}`,
-      );
       return;
     }
 
     if (lower === "/help") {
       await context.sendActivity(
-        [
-          "**AgentR** only replies to messages starting with `@` or `/`.",
-          "",
-          "**Commands**",
-          "`/pair <code>` — link your Teams user to the worker",
-          "`/projects` — list worker project aliases",
-          "`/status` — worker connection status",
-          "`/help` — this message",
-          "`/ss` — capture current desktop (all monitors), no agent",
-          "`@alias your prompt` — run a task on a project",
-        ].join("\n"),
+        MessageFactory.attachment(CardFactory.adaptiveCard(buildHelpCard())),
+      );
+      return;
+    }
+
+    if (lower === "/whoami") {
+      const worker = this.store.getWorker();
+      const shortId = userId.length > 12 ? `${userId.slice(0, 8)}…` : userId;
+      await context.sendActivity(
+        MessageFactory.attachment(
+          CardFactory.adaptiveCard(
+            buildStatusCard({
+              paired: this.store.isPaired(userId),
+              workerOnline: Boolean(worker),
+              hostname: worker?.hostname,
+              version: worker?.version,
+              projects: worker?.repos ?? [],
+            }),
+          ),
+        ),
+      );
+      await context.sendActivity(`User id: \`${shortId}\``);
+      return;
+    }
+
+    if (lower === "/status" || lower === "/projects") {
+      const worker = this.store.getWorker();
+      await context.sendActivity(
+        MessageFactory.attachment(
+          CardFactory.adaptiveCard(
+            buildStatusCard({
+              paired: this.store.isPaired(userId),
+              workerOnline: Boolean(worker),
+              hostname: worker?.hostname,
+              version: worker?.version,
+              projects: worker?.repos ?? [],
+            }),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (lower === "/sshq" || lower.startsWith("/sshq ")) {
+      await this.handleScreenshotCommand(context, userId, "hq");
+      return;
+    }
+
+    if (lower === "/ss" || lower.startsWith("/ss ")) {
+      await this.handleScreenshotCommand(context, userId, "preview");
+      return;
+    }
+
+    if (lower === "/cancel") {
+      if (!this.store.isPaired(userId)) {
+        await context.sendActivity("Not paired. Send `/pair <code>` first.");
+        return;
+      }
+      const conversationId = context.activity.conversation.id;
+      const task = this.store.findRunningTaskForConversation(conversationId);
+      if (!task) {
+        await context.sendActivity("No running task to cancel.");
+        return;
+      }
+      const ok = this.hub.send({ type: "task.cancel", taskId: task.taskId });
+      await context.sendActivity(
+        ok ? "Cancelled." : "Worker is offline — cancel was not delivered.",
       );
       return;
     }
 
     if (!this.store.isPaired(userId)) {
-      await context.sendActivity(
-        "Not paired. Open the tray app for a pairing code, then send `/pair <code>`.",
-      );
+      await context.sendActivity("Not paired. Send `/pair <code>` from the AgentR tray.");
       return;
     }
 
     const worker = this.store.getWorker();
     if (!worker) {
-      await context.sendActivity("Worker is offline. Start the tray app on your PC.");
+      await context.sendActivity("Worker is offline. Start the AgentR tray on your PC.");
       return;
     }
 
-    const { alias, prompt } = parseProjectAlias(text);
-
-    // Task prompts must use @alias.
-    if (!alias) {
+    if (!text.startsWith("!")) {
       await context.sendActivity(
-        "Use `@alias your prompt`, or `/ss` for screenshots. Example: `@sample what's in this folder?`",
+        "Unknown command. Send `/help`, or run a task with `!alias your prompt`.",
       );
       return;
     }
 
+    const { alias, prompt } = parseProjectAlias(text);
+    if (!alias) {
+      await context.sendActivity(
+        "Use `!alias your prompt`. Example: `!sample what's in this folder?`",
+      );
+      return;
+    }
     if (!prompt) {
       await context.sendActivity(
-        "Add a prompt after `@alias`, e.g. `@sample what's in this folder?`",
+        "Add a prompt after the alias. Example: `!sample what's in this folder?`",
       );
       return;
     }
@@ -278,6 +287,51 @@ export class AgentRelayBot {
       this.store.setStatus(taskId, "failed");
       await this.updateTaskCard(record, "Worker disconnected while starting task.");
     }
+  }
+
+  private async handleScreenshotCommand(
+    context: TurnContext,
+    userId: string,
+    quality: "preview" | "hq",
+  ): Promise<void> {
+    if (!this.store.isPaired(userId)) {
+      await context.sendActivity("Not paired. Send `/pair <code>` first.");
+      return;
+    }
+    const worker = this.store.getWorker();
+    if (!worker) {
+      await context.sendActivity("Worker is offline. Start the AgentR tray on your PC.");
+      return;
+    }
+
+    const requestId = randomUUID();
+    const conversation = {
+      serviceUrl: context.activity.serviceUrl,
+      conversationId: context.activity.conversation.id,
+      activityId: context.activity.id,
+      tenantId: context.activity.conversation.tenantId,
+    };
+    this.store.createTask({
+      taskId: requestId,
+      threadId: conversation.conversationId,
+      prompt: "Desktop screenshots",
+      conversation,
+    });
+
+    const ok = this.hub.send({
+      type: "screenshot.capture",
+      requestId,
+      quality,
+    });
+    if (!ok) {
+      await context.sendActivity("Worker disconnected — could not request screenshots.");
+      return;
+    }
+    await context.sendActivity(
+      quality === "hq"
+        ? "Capturing high-quality screenshots…"
+        : "Capturing preview screenshots…",
+    );
   }
 
   async onWorkerHello(
@@ -372,7 +426,7 @@ export class AgentRelayBot {
     await this.sendToConversation(
       task,
       MessageFactory.text(
-        `🖥 **Desktop screenshots** — ${task.artifacts.length} display${task.artifacts.length === 1 ? "" : "s"}`,
+        `**Desktop screenshots** — ${task.artifacts.length} display${task.artifacts.length === 1 ? "" : "s"}`,
       ),
     );
 
