@@ -9,7 +9,7 @@ build/
 Thumbs.db
 *.tsbuildinfo
 packages/tray/out/
-packages/cli/teams-app.zip
+packages/cli/agentr-teams.zip
 .agent-relay/
 agent-relay-out/
 .smoke-worker-config.json

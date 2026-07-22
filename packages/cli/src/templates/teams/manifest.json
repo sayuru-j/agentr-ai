@@ -1,18 +1,18 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "id": "{{APP_ID}}",
   "packageName": "com.agentr.relay",
   "developer": {
-    "name": "AgentRelay",
+    "name": "AgentR",
     "websiteUrl": "https://{{BOT_DOMAIN}}",
     "privacyUrl": "https://{{BOT_DOMAIN}}/privacy",
     "termsOfUseUrl": "https://{{BOT_DOMAIN}}/terms"
   },
   "name": {
-    "short": "AgentRelay",
-    "full": "AgentRelay — local Cursor agent control"
+    "short": "AgentR",
+    "full": "AgentR — local Cursor agent control"
   },
   "description": {
     "short": "Control local AI coding agents from Teams",
@@ -22,7 +22,7 @@
     "color": "color.png",
     "outline": "outline.png"
   },
-  "accentColor": "#1A73E8",
+  "accentColor": "#8B4513",
   "bots": [
     {
       "botId": "{{APP_ID}}",
@@ -47,7 +47,7 @@
             },
             {
               "title": "help",
-              "description": "Show AgentRelay help"
+              "description": "Show AgentR help"
             }
           ]
         }

@@ -134,7 +134,7 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
     "utf8",
   );
 
-  const zipPath = join(base, "teams-app.zip");
+  const zipPath = join(base, "agentr-teams.zip");
   await buildTeamsAppZip({
     outPath: zipPath,
     appId: String(appId),

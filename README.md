@@ -61,7 +61,7 @@ Use \`--yes\` to skip confirm prompts. It also writes:
 - `config.env` — App ID/Secret, `WORKER_TOKEN`, ports
 - `caddy/Caddyfile` — TLS + reverse proxy to `:3000` (bot) and `:8080` (`/ws`)
 - `systemd/agent-relay-server.service`
-- `teams-app.zip` — upload / sideload in Teams
+- `agentr-teams.zip` — upload / sideload in Teams
 - `install-services.sh` — enable systemd + Caddy on Linux
 
 Copy the printed **WORKER_TOKEN** for the PC tray config.

@@ -33,7 +33,7 @@ export async function runStatus(opts: { dryRun?: boolean }): Promise<void> {
     }
   }
 
-  const zip = join(base, "teams-app.zip");
+  const zip = join(base, "agentr-teams.zip");
   console.log(`Teams zip:  ${existsSync(zip) ? zip : pc.dim("not generated")}`);
 
   // Prefer reading caddyfile existence
