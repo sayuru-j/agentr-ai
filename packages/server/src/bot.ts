@@ -102,8 +102,17 @@ export class AgentRelayBot {
   }
 
   private async handleMessage(context: TurnContext): Promise<void> {
-    const text = (context.activity.text ?? "").trim();
+    // Strip Teams @bot mention so "@AgentR @sample …" still parses as @sample.
+    TurnContext.removeRecipientMention(context.activity);
+    const text = (context.activity.text ?? "")
+      .replace(/<\/?at>/gi, "")
+      .trim();
     if (!text) return;
+
+    // Only respond to slash commands and @alias prompts — ignore normal chat.
+    if (!text.startsWith("@") && !text.startsWith("/")) {
+      return;
+    }
 
     const userId = context.activity.from?.id ?? "";
     const lower = text.toLowerCase();
@@ -116,7 +125,7 @@ export class AgentRelayBot {
       }
       if (this.store.pair(userId, code)) {
         await context.sendActivity(
-          "Paired successfully. You can now send prompts. Prefix with `@alias` to pick a project.",
+          "Paired successfully. Send `@alias your prompt` (add `/ss` for screenshots). AgentR ignores normal chat.",
         );
       } else {
         await context.sendActivity(
@@ -143,13 +152,15 @@ export class AgentRelayBot {
     if (lower === "/help") {
       await context.sendActivity(
         [
-          "**AgentRelay commands**",
+          "**AgentR** only replies to messages starting with `@` or `/`.",
+          "",
+          "**Commands**",
           "`/pair <code>` — link your Teams user to the worker",
           "`/projects` — list worker project aliases",
           "`/status` — worker connection status",
+          "`/help` — this message",
           "`@alias your prompt` — run a task on a project",
-          "`/ss` — include desktop screenshots of all monitors after the task",
-          "`/ss @alias your prompt` — run + screenshot",
+          "`/ss @alias your prompt` — run + desktop screenshots",
         ].join("\n"),
       );
       return;
@@ -170,11 +181,20 @@ export class AgentRelayBot {
 
     const { captureScreenshots, text: withoutSs } = parseScreenshotFlag(text);
     const { alias, prompt } = parseProjectAlias(withoutSs);
+
+    // Task prompts must use @alias (after optional /ss).
+    if (!alias) {
+      await context.sendActivity(
+        "Use `@alias your prompt` (optionally with `/ss`). Example: `/ss @sample open the app`",
+      );
+      return;
+    }
+
     if (!prompt) {
       await context.sendActivity(
         captureScreenshots
-          ? "Add a prompt after `/ss`, e.g. `/ss @sample open the app`."
-          : "Empty prompt.",
+          ? "Add a prompt after `/ss @alias`, e.g. `/ss @sample open the app`."
+          : "Add a prompt after `@alias`, e.g. `@sample what's in this folder?`",
       );
       return;
     }
