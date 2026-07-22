@@ -20,6 +20,17 @@ export interface TaskRunnerEvents {
 }
 
 /**
+ * On Windows, `spawn(..., { shell: true })` joins args with spaces and does
+ * not escape them — paths like `C:\Users\Sayuru at Fleximal\...` get truncated.
+ * Quote for cmd.exe when needed.
+ */
+function quoteWinCmdArg(arg: string): string {
+  if (arg.length >= 2 && arg.startsWith('"') && arg.endsWith('"')) return arg;
+  if (!/[ \t"&<>|^%!]/.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+/**
  * Spawns headless `agent` against a project folder and streams output.
  * Defaults to Cursor Auto (`--model auto`). Passes `--trust` because projects
  * are already chosen by the user in the tray (no interactive trust prompt).
@@ -39,22 +50,23 @@ export class TaskRunner extends EventEmitter {
     }
 
     const model = (opts.agentModel || "auto").trim() || "auto";
-    // Headless relay: trust user-picked projects, print to stdout, auto-allow tools.
+    // Prefer `--workspace=<path>` as one argv so spaced paths stay intact.
     const args = [
       "--print",
       "--trust",
       "--force",
       "--model",
       model,
-      "--workspace",
-      opts.cwd,
+      `--workspace=${opts.cwd}`,
       "chat",
       opts.prompt,
     ];
-    this.child = spawn(opts.agentCommand, args, {
+
+    const useShell = process.platform === "win32";
+    this.child = spawn(opts.agentCommand, useShell ? args.map(quoteWinCmdArg) : args, {
       cwd: opts.cwd,
       env: process.env,
-      shell: process.platform === "win32",
+      shell: useShell,
     });
 
     const scan = async (stream: "stdout" | "stderr", chunk: string) => {
@@ -114,7 +126,7 @@ export class TaskRunner extends EventEmitter {
     const model = (opts.agentModel || "auto").trim() || "auto";
     opts.onLog(
       "stdout",
-      `[dry-run] Would run: agent --print --trust --force --model ${model} --workspace … chat …\n`,
+      `[dry-run] Would run: agent --print --trust --force --model ${model} --workspace=… chat …\n`,
     );
     opts.onLog("stdout", "[dry-run] Done.\n");
     return 0;
