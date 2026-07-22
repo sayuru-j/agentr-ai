@@ -70,6 +70,8 @@ async function main(): Promise<void> {
         ? { hostname: worker.hostname, repos: worker.repos }
         : null,
       pairedUsers: store.pairedUserIds.size,
+      workerTokenConfigured: Boolean(config.workerToken),
+      workerTokenLength: config.workerToken.length,
     });
   });
 

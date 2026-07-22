@@ -29,6 +29,7 @@ export class AgentRelayWorker {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  private authBlocked = false;
   private status: WorkerStatus = "offline";
   private pairingCode = generatePairingCode();
   private runners = new Map<string, TaskRunner>();
@@ -89,6 +90,7 @@ export class AgentRelayWorker {
   }
 
   reconnect(): void {
+    this.authBlocked = false;
     this.ws?.close();
     this.ws = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -102,7 +104,7 @@ export class AgentRelayWorker {
   }
 
   private connect(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.authBlocked) return;
     const token = this.config.workerToken.trim();
     if (!token || token.includes("PASTE_")) {
       this.setStatus("offline");
@@ -116,7 +118,18 @@ export class AgentRelayWorker {
     this.setStatus("connecting");
     this.emit("log", `Connecting to ${this.config.relayUrl}…`);
 
-    const ws = new WebSocket(this.config.relayUrl, {
+    // Put token in query as well — some proxies drop Authorization on WS upgrade
+    let wsUrl = this.config.relayUrl;
+    try {
+      const u = new URL(this.config.relayUrl);
+      u.searchParams.set("token", token);
+      wsUrl = u.toString();
+    } catch {
+      const join = this.config.relayUrl.includes("?") ? "&" : "?";
+      wsUrl = `${this.config.relayUrl}${join}token=${encodeURIComponent(token)}`;
+    }
+
+    const ws = new WebSocket(wsUrl, {
       headers: {
         Authorization: `Bearer ${token}`,
         "X-AgentR-Token": token,
@@ -159,6 +172,8 @@ export class AgentRelayWorker {
       this.setStatus("offline");
 
       if (code === 4001) {
+        this.authBlocked = true;
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         this.emit(
           "unauthorized",
           "Relay rejected the worker token (unauthorized). Copy WORKER_TOKEN from the VM and Save & connect again.",
@@ -175,7 +190,7 @@ export class AgentRelayWorker {
   }
 
   private scheduleReconnect(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.authBlocked) return;
     const wait = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 2, 30_000);
     this.emit("log", `Reconnecting in ${Math.round(wait / 1000)}s…`);
