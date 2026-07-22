@@ -14,3 +14,4 @@ packages/cli/agentr-teams.zip
 agent-relay-out/
 .smoke-worker-config.json
 coverage/
+package-lock.json
