@@ -1,0 +1,21 @@
+{
+  "name": "@agentr/tray",
+  "version": "0.1.0",
+  "description": "AgentRelay Windows system tray app",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentr/worker": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "electron": "^33.3.1",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT"
+}

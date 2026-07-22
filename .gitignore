@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+packages/tray/out/
+packages/cli/teams-app.zip
+.agent-relay/
+agent-relay-out/
+.smoke-worker-config.json
+coverage/

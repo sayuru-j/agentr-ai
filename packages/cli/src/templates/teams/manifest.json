@@ -1,0 +1,59 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "{{APP_ID}}",
+  "packageName": "com.agentr.relay",
+  "developer": {
+    "name": "AgentRelay",
+    "websiteUrl": "https://{{BOT_DOMAIN}}",
+    "privacyUrl": "https://{{BOT_DOMAIN}}/privacy",
+    "termsOfUseUrl": "https://{{BOT_DOMAIN}}/terms"
+  },
+  "name": {
+    "short": "AgentRelay",
+    "full": "AgentRelay — local Cursor agent control"
+  },
+  "description": {
+    "short": "Control local AI coding agents from Teams",
+    "full": "Send prompts to your local Cursor agent via a self-hosted WebSocket relay. Stream logs and approve shell commands from any Teams client."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#1A73E8",
+  "bots": [
+    {
+      "botId": "{{APP_ID}}",
+      "scopes": ["personal", "team", "groupchat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team", "groupchat"],
+          "commands": [
+            {
+              "title": "pair",
+              "description": "Pair this Teams user: /pair <code>"
+            },
+            {
+              "title": "projects",
+              "description": "List worker project aliases"
+            },
+            {
+              "title": "status",
+              "description": "Show worker connection status"
+            },
+            {
+              "title": "help",
+              "description": "Show AgentRelay help"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["{{BOT_DOMAIN}}"]
+}

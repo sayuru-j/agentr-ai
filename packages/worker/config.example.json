@@ -1,0 +1,10 @@
+{
+  "relayUrl": "wss://relay.example.com/ws",
+  "workerToken": "paste-token-from-vm-config.env",
+  "projects": {
+    "frontend": "C:/path/to/frontend",
+    "backend": "C:/path/to/backend"
+  },
+  "agentCommand": "agent",
+  "dryRun": true
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@agentr/cli",
+  "version": "0.1.0",
+  "description": "AgentRelay VM provisioning wizard",
+  "type": "module",
+  "bin": {
+    "agent-relay": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentr/shared": "*",
+    "@clack/prompts": "^0.9.1",
+    "archiver": "^7.0.1",
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.3",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT"
+}
