@@ -52,7 +52,7 @@ export class ArtifactStore {
       .digest("hex")
       .slice(0, 16);
 
-    const url = `${this.publicBaseUrl.replace(/\/$/, "")}/artifacts/${safeTask}/${encodeURIComponent(safeName)}?t=${token}`;
+    const url = `${this.publicBaseUrl.replace(/\/$/, "")}/api/artifacts/${safeTask}/${encodeURIComponent(safeName)}?t=${token}`;
 
     return {
       taskId: opts.taskId,
@@ -62,6 +62,19 @@ export class ArtifactStore {
       url,
       path,
     };
+  }
+
+  saveBuffer(opts: {
+    taskId: string;
+    name: string;
+    mimeType: string;
+    buffer: Buffer;
+    label?: string;
+  }): StoredArtifact {
+    return this.save({
+      ...opts,
+      dataBase64: opts.buffer.toString("base64"),
+    });
   }
 
   read(taskId: string, name: string): { buffer: Buffer; mimeType: string } | null {

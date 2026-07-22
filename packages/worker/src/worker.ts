@@ -10,6 +10,7 @@ import WebSocket from "ws";
 import type { WorkerConfig } from "./config.js";
 import { newApprovalId, TaskRunner } from "./runner.js";
 import { captureAllDisplays } from "./screenshot.js";
+import { uploadScreenshotsHttps } from "./upload.js";
 
 export type WorkerStatus = "offline" | "connecting" | "online" | "busy";
 
@@ -336,10 +337,7 @@ export class AgentRelayWorker {
     this.setStatus(this.ws ? "online" : "offline");
     this.emit("taskEnd", { taskId, exitCode: exitCode ?? 1 });
 
-    if (captureScreenshots && !this.config.dryRun) {
-      await this.sendDesktopScreenshots(taskId);
-    }
-
+    // Finish the task card first, then upload screenshots over HTTPS.
     this.send({
       type: "task.status",
       taskId,
@@ -352,30 +350,50 @@ export class AgentRelayWorker {
             ? "Cancelled"
             : `Exited with code ${exitCode}`,
     });
+
+    if (captureScreenshots && !this.config.dryRun) {
+      await this.sendDesktopScreenshots(taskId);
+    }
   }
 
   private async sendDesktopScreenshots(taskId: string): Promise<void> {
     try {
-      // Brief pause so windows the agent opened can finish painting.
       await new Promise((r) => setTimeout(r, 1500));
       const screens = await captureAllDisplays();
-      this.emit("log", `Captured ${screens.length} display screenshot(s)`);
-      for (const screen of screens) {
-        this.send({
-          type: "task.artifact",
-          taskId,
-          name: screen.name,
-          mimeType: screen.mimeType,
-          dataBase64: screen.buffer.toString("base64"),
-          kind: "screenshot",
-          label: screen.label,
-        });
-        this.emit("taskLog", {
-          taskId,
-          stream: "stdout",
-          chunk: `\n[screenshot] ${screen.label} (${screen.name})\n`,
-        });
+      this.emit("log", `Captured ${screens.length} display screenshot(s) — uploading via HTTPS…`);
+      this.send({
+        type: "task.log",
+        taskId,
+        stream: "stdout",
+        chunk: `\n[screenshot] Captured ${screens.length} display(s), uploading…\n`,
+        ts: Date.now(),
+      });
+
+      const result = await uploadScreenshotsHttps({
+        relayUrl: this.config.relayUrl,
+        workerToken: this.config.workerToken,
+        taskId,
+        screenshots: screens.map((s) => ({
+          name: s.name,
+          mimeType: s.mimeType,
+          label: s.label,
+          buffer: s.buffer,
+        })),
+        tlsInsecure: this.config.tlsInsecure,
+      });
+
+      if (!result.ok) {
+        throw new Error(result.error || "upload failed");
       }
+
+      this.emit("log", "Screenshot upload complete");
+      this.send({
+        type: "task.log",
+        taskId,
+        stream: "stdout",
+        chunk: `\n[screenshot] Uploaded to relay — check Teams for images\n`,
+        ts: Date.now(),
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.emit("error", new Error(`Screenshot failed: ${message}`));
@@ -383,7 +401,7 @@ export class AgentRelayWorker {
         type: "task.log",
         taskId,
         stream: "stderr",
-        chunk: `\n[agent-relay] Screenshot capture failed: ${message}\n`,
+        chunk: `\n[agent-relay] Screenshot capture/upload failed: ${message}\n`,
         ts: Date.now(),
       });
     }

@@ -295,24 +295,37 @@ export class AgentRelayBot {
       dataBase64: msg.dataBase64,
       label: msg.label,
     });
-    const task = this.store.addArtifact(msg.taskId, {
-      name: stored.name,
-      mimeType: stored.mimeType,
-      label: stored.label,
-      url: stored.url,
-    });
+    await this.onScreenshotsUploaded(msg.taskId, [
+      { name: stored.name, label: stored.label, url: stored.url },
+    ]);
+  }
+
+  /** Called after HTTPS upload (preferred) or legacy WSS artifact. */
+  async onScreenshotsUploaded(
+    taskId: string,
+    shots: Array<{ name: string; label: string; url: string }>,
+  ): Promise<void> {
+    let task = this.store.tasks.get(taskId);
+    if (!task) return;
+    for (const shot of shots) {
+      task = this.store.addArtifact(taskId, {
+        name: shot.name,
+        mimeType: "image/jpeg",
+        label: shot.label,
+        url: shot.url,
+      });
+    }
     if (!task) return;
 
-    // Debounce: wait until all monitors arrive, then post one screenshot card.
     const existing = this.artifactTimers.get(task.taskId);
     if (existing) clearTimeout(existing);
     this.artifactTimers.set(
       task.taskId,
       setTimeout(() => {
         this.artifactTimers.delete(task.taskId);
-        void this.sendScreenshotCard(task);
-        void this.updateTaskCard(task);
-      }, 600),
+        void this.sendScreenshotCard(task!);
+        void this.updateTaskCard(task!);
+      }, 400),
     );
   }
 

@@ -2,6 +2,7 @@
 import express from "express";
 import type { Request, Response } from "express";
 import { ArtifactStore } from "./artifacts.js";
+import { requireWorkerToken } from "./auth-http.js";
 import { AgentRelayBot } from "./bot.js";
 import { loadConfig } from "./config.js";
 import { SessionStore } from "./store.js";
@@ -65,7 +66,8 @@ async function main(): Promise<void> {
   console.log(`[server] Public base URL for artifacts: ${config.publicBaseUrl}`);
 
   const app = express();
-  app.use(express.json({ limit: "2mb" }));
+  // Screenshots are base64 JPEGs — allow larger POSTs on /api/artifacts
+  app.use(express.json({ limit: "25mb" }));
 
   app.get("/health", (_req, res) => {
     const worker = store.getWorker();
@@ -83,7 +85,7 @@ async function main(): Promise<void> {
     });
   });
 
-  app.get("/artifacts/:taskId/:name", (req: Request, res: Response) => {
+  const serveArtifact = (req: Request, res: Response) => {
     const file = artifacts.read(req.params.taskId, req.params.name);
     if (!file) {
       res.status(404).send("Not found");
@@ -92,6 +94,48 @@ async function main(): Promise<void> {
     res.setHeader("Content-Type", file.mimeType);
     res.setHeader("Cache-Control", "public, max-age=3600");
     res.send(file.buffer);
+  };
+
+  // Prefer /api/artifacts (already proxied by Caddy @bot path /api/*)
+  app.get("/api/artifacts/:taskId/:name", serveArtifact);
+  app.get("/artifacts/:taskId/:name", serveArtifact);
+
+  app.post("/api/artifacts", requireWorkerToken(config.workerToken), async (req, res) => {
+    const taskId = String(req.body?.taskId ?? "");
+    const shots = Array.isArray(req.body?.screenshots)
+      ? req.body.screenshots
+      : req.body?.dataBase64
+        ? [req.body]
+        : [];
+    if (!taskId || shots.length === 0) {
+      res.status(400).json({ error: "taskId and screenshots required" });
+      return;
+    }
+
+    const urls: Array<{ name: string; label: string; url: string }> = [];
+    for (const shot of shots) {
+      const name = String(shot.name ?? "screen.jpg");
+      const mimeType = String(shot.mimeType ?? "image/jpeg");
+      const dataBase64 = String(shot.dataBase64 ?? "");
+      const label = String(shot.label ?? name);
+      if (!dataBase64) continue;
+      const stored = artifacts.save({
+        taskId,
+        name,
+        mimeType,
+        dataBase64,
+        label,
+      });
+      urls.push({ name: stored.name, label: stored.label, url: stored.url });
+    }
+
+    if (urls.length === 0) {
+      res.status(400).json({ error: "no valid screenshots" });
+      return;
+    }
+
+    await bot.onScreenshotsUploaded(taskId, urls);
+    res.json({ ok: true, count: urls.length, screenshots: urls });
   });
 
   app.post("/api/messages", async (req: Request, res: Response) => {
