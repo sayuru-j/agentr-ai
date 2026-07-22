@@ -50,6 +50,10 @@ Useful commands:
 
 ```bash
 npm run cli:status
+# interactive menu: reload Caddy, restart relay, logs, show token/pair, …
+
+npm run cli -- status --no-menu
+npm run cli -- status --action reload-caddy
 npm run cli -- token rotate
 systemctl status agent-relay-server --no-pager
 systemctl status caddy --no-pager

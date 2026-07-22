@@ -37,10 +37,19 @@ program
 
 program
   .command("status")
-  .description("Show relay service and config status")
+  .description("Show relay status and manage services (reload Caddy, logs, …)")
   .option("--dry-run", "Look at ./agent-relay-out instead of /etc", false)
+  .option("--no-menu", "Print status only (no action menu)", false)
+  .option(
+    "--action <name>",
+    "Run one action: reload-caddy|restart-caddy|restart-relay|restart-all|sync-caddyfile|logs-relay|logs-caddy|health|show-pair|show-token|rotate-token|install-services|refresh",
+  )
   .action(async (opts) => {
-    await runStatus(opts);
+    await runStatus({
+      dryRun: opts.dryRun,
+      noMenu: opts.noMenu,
+      action: opts.action,
+    });
   });
 
 const tokenCmd = program
