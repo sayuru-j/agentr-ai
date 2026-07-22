@@ -1,6 +1,9 @@
 /* global agentr API from preload */
 const $ = (id) => document.getElementById(id);
 
+/** Last token loaded from disk — kept if the password field is left blank on save. */
+let savedToken = "";
+
 function projectRow(alias = "", path = "") {
   const row = document.createElement("div");
   row.className = "project-row";
@@ -39,18 +42,31 @@ function readProjects() {
 }
 
 function setStatus(status, pairingCode) {
-  const dot = $("status-dot");
-  dot.className = `dot ${status}`;
-  $("status-label").textContent = status;
+  const el = $("status-label");
+  el.textContent = status;
+  el.className = `title-status ${status}`;
   $("pairing-btn").textContent = `/pair ${pairingCode || "--------"}`;
   $("pairing-btn").dataset.code = pairingCode || "";
 }
 
+function updateTokenSavedLabel(token) {
+  const el = $("token-saved");
+  if (!token) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.textContent = `Saved ····${token.slice(-4)} (${token.length} chars)`;
+}
+
 function fillForm(config) {
+  savedToken = (config.workerToken || "").trim();
   $("relayUrl").value = config.relayUrl || "";
-  $("workerToken").value = config.workerToken || "";
+  $("workerToken").value = savedToken;
   $("agentCommand").value = config.agentCommand || "agent";
   $("dryRun").checked = Boolean(config.dryRun);
+  updateTokenSavedLabel(savedToken);
   $("projects").innerHTML = "";
   const entries = Object.entries(config.projects || {});
   if (entries.length === 0) addProject("frontend", "");
@@ -58,9 +74,10 @@ function fillForm(config) {
 }
 
 function readForm() {
+  const typed = $("workerToken").value.trim();
   return {
     relayUrl: $("relayUrl").value.trim(),
-    workerToken: $("workerToken").value.trim(),
+    workerToken: typed || savedToken,
     agentCommand: $("agentCommand").value.trim() || "agent",
     dryRun: $("dryRun").checked,
     projects: readProjects(),
@@ -75,10 +92,13 @@ function showMsg(text, isError = false) {
   clearTimeout(showMsg._t);
   showMsg._t = setTimeout(() => {
     el.hidden = true;
-  }, 3500);
+  }, 4000);
 }
 
 async function boot() {
+  $("win-min").addEventListener("click", () => window.agentr.windowMinimize());
+  $("win-close").addEventListener("click", () => window.agentr.windowClose());
+
   const [config, live] = await Promise.all([
     window.agentr.getConfig(),
     window.agentr.getStatus(),
@@ -101,10 +121,9 @@ async function boot() {
   $("pairing-btn").addEventListener("click", async () => {
     const code = $("pairing-btn").dataset.code;
     if (!code) return;
-    const text = `/pair ${code}`;
     try {
-      await navigator.clipboard.writeText(text);
-      showMsg("Pairing command copied");
+      await navigator.clipboard.writeText(`/pair ${code}`);
+      showMsg("Copied");
     } catch {
       showMsg("Could not copy", true);
     }
@@ -113,15 +132,18 @@ async function boot() {
   $("save").addEventListener("click", async () => {
     const cfg = readForm();
     if (!cfg.relayUrl) {
-      showMsg("Relay URL is required", true);
+      showMsg("Relay URL required", true);
       return;
     }
     if (!cfg.workerToken) {
-      showMsg("Paste the worker token from the VM", true);
+      showMsg("Token required", true);
       return;
     }
     try {
-      await window.agentr.saveConfig(cfg);
+      const saved = await window.agentr.saveConfig(cfg);
+      savedToken = saved.workerToken;
+      $("workerToken").value = savedToken;
+      updateTokenSavedLabel(savedToken);
       showMsg("Saved — connecting…");
     } catch (err) {
       showMsg(err?.message || "Save failed", true);

@@ -11,92 +11,81 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <header class="titlebar">
+      <div class="titlebar-drag">
+        <img class="title-logo" src="logo.png" alt="" width="22" height="22" />
+        <span class="title-wordmark">AgentR</span>
+        <span id="status-label" class="title-status">offline</span>
+      </div>
+      <div class="titlebar-controls">
+        <button type="button" id="win-min" aria-label="Minimize">─</button>
+        <button type="button" id="win-close" aria-label="Close" class="close">✕</button>
+      </div>
+    </header>
+
     <div class="shell">
-      <header class="top">
-        <div class="brand">
-          <img class="logo" src="logo.png" alt="" width="48" height="48" />
-          <div>
-            <h1>AgentR</h1>
-            <p class="tag">Local agent · Teams relay</p>
-          </div>
+      <p class="pair-line">
+        <button type="button" id="pairing-btn" class="pair-btn">/pair --------</button>
+        <span class="muted">copy for Teams</span>
+      </p>
+
+      <label class="field">
+        <span>Relay URL</span>
+        <input
+          id="relayUrl"
+          type="url"
+          spellcheck="false"
+          placeholder="wss://your-domain/ws"
+          autocomplete="off"
+        />
+      </label>
+
+      <label class="field">
+        <span>Worker token</span>
+        <p id="token-saved" class="saved" hidden></p>
+        <div class="row">
+          <input
+            id="workerToken"
+            type="password"
+            spellcheck="false"
+            placeholder="Paste token from VM"
+            autocomplete="off"
+            data-lpignore="true"
+            data-1p-ignore="true"
+          />
+          <button type="button" id="toggle-token" class="text-btn">Show</button>
         </div>
-        <div class="status-block">
-          <span id="status-dot" class="dot offline" aria-hidden="true"></span>
-          <div>
-            <div id="status-label" class="status-label">offline</div>
-            <button type="button" id="pairing-btn" class="pairing" title="Copy pairing command">
-              /pair --------
-            </button>
-          </div>
+      </label>
+
+      <div class="field">
+        <div class="row between">
+          <span>Projects</span>
+          <button type="button" id="add-project" class="text-btn">Add</button>
         </div>
-      </header>
+        <p class="hint">Teams: <code>[alias] your prompt</code></p>
+        <div id="projects" class="projects"></div>
+      </div>
 
-      <main>
-        <section class="panel">
-          <h2>Connection</h2>
-          <p class="hint">Paste values from the VM setup (`config.env`).</p>
+      <label class="check">
+        <input id="dryRun" type="checkbox" />
+        <span>Dry run</span>
+      </label>
 
-          <label class="field">
-            <span>Relay WebSocket URL</span>
-            <input
-              id="relayUrl"
-              type="url"
-              spellcheck="false"
-              placeholder="wss://agent.example.com/ws"
-              autocomplete="off"
-            />
-          </label>
-
-          <label class="field">
-            <span>Worker token</span>
-            <div class="token-row">
-              <input
-                id="workerToken"
-                type="password"
-                spellcheck="false"
-                placeholder="Paste WORKER_TOKEN here"
-                autocomplete="off"
-              />
-              <button type="button" id="toggle-token" class="ghost" aria-label="Show token">
-                Show
-              </button>
-            </div>
-          </label>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Projects</h2>
-            <button type="button" id="add-project" class="ghost">Add</button>
-          </div>
-          <p class="hint">Aliases used as <code>[alias]</code> in Teams prompts.</p>
-          <div id="projects" class="projects"></div>
-        </section>
-
-        <section class="panel options">
-          <label class="check">
-            <input id="dryRun" type="checkbox" />
-            <span>Dry run (don’t spawn Cursor CLI)</span>
-          </label>
-          <label class="field compact">
-            <span>Agent command</span>
-            <input id="agentCommand" type="text" spellcheck="false" value="agent" />
-          </label>
-        </section>
-      </main>
+      <label class="field">
+        <span>Agent command</span>
+        <input id="agentCommand" type="text" spellcheck="false" value="agent" />
+      </label>
 
       <footer class="footer">
         <p id="save-msg" class="save-msg" hidden></p>
-        <div class="actions">
-          <button type="button" id="reconnect" class="ghost">Reconnect</button>
-          <button type="button" id="save" class="primary">Save &amp; connect</button>
-        </div>
+        <button type="button" id="reconnect" class="btn">Reconnect</button>
+        <button type="button" id="save" class="btn btn-main">Save &amp; connect</button>
       </footer>
     </div>
     <script src="renderer.js"></script>

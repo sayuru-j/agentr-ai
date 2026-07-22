@@ -127,13 +127,15 @@ function openSettings(): void {
   }
 
   settingsWindow = new BrowserWindow({
-    width: 560,
-    height: 720,
-    minWidth: 480,
-    minHeight: 640,
+    width: 420,
+    height: 640,
+    minWidth: 380,
+    minHeight: 520,
     title: "AgentR",
-    backgroundColor: "#14110f",
+    backgroundColor: "#f7f6f3",
     autoHideMenuBar: true,
+    frame: false,
+    titleBarStyle: "hidden",
     show: false,
     webPreferences: {
       preload: PRELOAD_PATH,
@@ -161,6 +163,9 @@ function startWorker(): void {
   }
 
   const config = loadWorkerConfig();
+  console.log(
+    `[tray] Config ${DEFAULT_CONFIG_PATH} · token ${config.workerToken ? `${config.workerToken.length} chars (…${config.workerToken.slice(-4)})` : "MISSING"}`,
+  );
   worker = new AgentRelayWorker(config);
   worker.on("status", (s) => {
     status = s;
@@ -231,6 +236,14 @@ function registerIpc(): void {
   ipcMain.handle("worker:reconnect", () => {
     worker?.reconnect();
     return { ok: true };
+  });
+
+  ipcMain.handle("window:minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.handle("window:close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
   });
 }
 

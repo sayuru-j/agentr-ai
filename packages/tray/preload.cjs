@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("agentr", {
   saveConfig: (config) => ipcRenderer.invoke("config:save", config),
   getStatus: () => ipcRenderer.invoke("status:get"),
   reconnect: () => ipcRenderer.invoke("worker:reconnect"),
+  windowMinimize: () => ipcRenderer.invoke("window:minimize"),
+  windowClose: () => ipcRenderer.invoke("window:close"),
   onStatus: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on("status:changed", handler);
