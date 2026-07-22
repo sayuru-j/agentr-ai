@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import pc from "picocolors";
+import { ensureDependencies, resolveNodeBinary, NVM_VERSION, NODE_VERSION } from "../deps.js";
 import { buildTeamsAppZip } from "../templates/teams-zip.js";
 import {
   renderCaddyfile,
@@ -31,51 +32,10 @@ function rootOut(opts: SetupOptions): string {
   return "/etc/agent-relay";
 }
 
-function which(cmd: string): boolean {
-  try {
-    execSync(process.platform === "win32" ? `where ${cmd}` : `command -v ${cmd}`, {
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function checkDeps(): void {
-  const nodeOk = which("node");
-  const gitOk = which("git");
-  const caddyOk = which("caddy");
-
-  p.note(
-    [
-      `Node.js: ${nodeOk ? pc.green("found") : pc.red("missing")}`,
-      `Git:     ${gitOk ? pc.green("found") : pc.red("missing")}`,
-      `Caddy:   ${caddyOk ? pc.green("found") : pc.yellow("missing")}`,
-    ].join("\n"),
-    "Dependencies",
-  );
-
-  if (!nodeOk) {
-    p.log.error(
-      "Install Node.js 20+ first: https://nodejs.org/ or `curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash`",
-    );
-    process.exit(1);
-  }
-  if (!gitOk) {
-    p.log.warn("Git not found. Install with: sudo apt install git");
-  }
-  if (!caddyOk) {
-    p.log.warn(
-      "Caddy not found. On Debian/Ubuntu:\n  sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https\n  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg\n  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list\n  sudo apt update && sudo apt install caddy",
-    );
-  }
-}
-
 export async function runSetup(opts: SetupOptions): Promise<void> {
   p.intro(pc.bgCyan(pc.black(" AgentRelay setup ")));
 
-  checkDeps();
+  await ensureDependencies({ yes: opts.yes, dryRun: opts.dryRun });
 
   const domain =
     opts.domain ??
@@ -151,11 +111,12 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
   );
 
   const serverEntry = resolveServerEntry();
+  const nodeBin = installDry ? "node" : resolveNodeBinary();
   writeFileSync(
     join(base, "systemd", "agent-relay-server.service"),
     renderSystemdUnit({
       envFile: installDry ? envPath : "/etc/agent-relay/config.env",
-      execStart: `node ${serverEntry}`,
+      execStart: `${nodeBin} ${serverEntry}`,
       workingDirectory: dirname(serverEntry),
     }),
     "utf8",
@@ -174,15 +135,49 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
     join(base, "install-services.sh"),
     `#!/usr/bin/env bash
 set -euo pipefail
+
+sudo apt-get update -y
+sudo apt-get install -y git curl ca-certificates debian-keyring debian-archive-keyring apt-transport-https gnupg
+
+# nvm + Node ${NODE_VERSION}
+export NVM_DIR="\${NVM_DIR:-\$HOME/.nvm}"
+if [ ! -s "\$NVM_DIR/nvm.sh" ]; then
+  echo "Installing nvm ${NVM_VERSION}…"
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh | bash
+fi
+# shellcheck disable=SC1090
+. "\$NVM_DIR/nvm.sh"
+nvm install ${NODE_VERSION}
+nvm alias default ${NODE_VERSION}
+nvm use ${NODE_VERSION}
+
+# Caddy
+if ! command -v caddy >/dev/null 2>&1; then
+  echo "Installing Caddy…"
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+  sudo apt-get update -y
+  sudo apt-get install -y caddy
+fi
+
 sudo mkdir -p /etc/agent-relay /etc/caddy
 sudo cp "$(dirname "$0")/config.env" /etc/agent-relay/config.env
 sudo chmod 600 /etc/agent-relay/config.env
 sudo cp "$(dirname "$0")/caddy/Caddyfile" /etc/caddy/Caddyfile
-sudo cp "$(dirname "$0")/systemd/agent-relay-server.service" /etc/systemd/system/
+
+# Rewrite ExecStart to absolute nvm node if unit still says bare "node"
+NODE_BIN="$(command -v node)"
+UNIT_SRC="$(dirname "$0")/systemd/agent-relay-server.service"
+UNIT_TMP="$(mktemp)"
+sed "s|^ExecStart=node |ExecStart=\${NODE_BIN} |" "\$UNIT_SRC" > "\$UNIT_TMP"
+sudo cp "\$UNIT_TMP" /etc/systemd/system/agent-relay-server.service
+rm -f "\$UNIT_TMP"
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now agent-relay-server
-sudo systemctl reload caddy || sudo systemctl enable --now caddy
-echo "AgentRelay services installed."
+sudo systemctl enable --now caddy
+sudo systemctl reload caddy || sudo systemctl restart caddy
+echo "AgentRelay services installed (Node \$(node -v))."
 `,
     "utf8",
   );

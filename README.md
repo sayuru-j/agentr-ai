@@ -27,7 +27,7 @@ Teams (any device)  --HTTPS webhook-->  VM (Caddy + agent-relay-server)
 
 ## Prerequisites
 
-- **VM:** Ubuntu/Debian, public DNS A record, Node 20+, Caddy, Git
+- **VM:** Ubuntu/Debian with a public DNS A record (wizard installs git, nvm, Node 25.0.0, and Caddy)
 - **Host PC:** Windows 10+, Node 20+, [Cursor CLI](https://cursor.com) (`agent` on PATH)
 - **Teams:** Azure Bot / Teams app (App ID + Secret)
 
@@ -50,7 +50,13 @@ node packages/cli/dist/index.js setup
 # or after linking: npm run setup
 ```
 
-The wizard writes:
+The wizard checks dependencies and, on Debian/Ubuntu, can install:
+
+- **git** + **curl** (apt)
+- **nvm** \`v0.40.6\` and **Node.js \`25.0.0\`** as the default (\`nvm use\` / \`nvm alias default\`)
+- **Caddy** (official apt repo)
+
+Use \`--yes\` to skip confirm prompts. It also writes:
 
 - `config.env` — App ID/Secret, `WORKER_TOKEN`, ports
 - `caddy/Caddyfile` — TLS + reverse proxy to `:3000` (bot) and `:8080` (`/ws`)
