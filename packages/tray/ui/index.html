@@ -29,64 +29,93 @@
       </div>
     </header>
 
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab active" data-tab="home" role="tab" aria-selected="true">
+        Home
+      </button>
+      <button type="button" class="tab" data-tab="projects" role="tab" aria-selected="false">
+        Projects
+      </button>
+      <button type="button" class="tab" data-tab="settings" role="tab" aria-selected="false">
+        Settings
+      </button>
+    </nav>
+
     <div class="shell">
-      <p class="pair-line">
-        <button type="button" id="pairing-btn" class="pair-btn">/pair --------</button>
-        <span class="muted">copy for Teams</span>
-      </p>
-
-      <label class="field">
-        <span>Relay URL</span>
-        <input
-          id="relayUrl"
-          type="url"
-          spellcheck="false"
-          placeholder="wss://your-domain/ws"
-          autocomplete="off"
-        />
-      </label>
-
-      <label class="field">
-        <span>Worker token</span>
-        <p id="token-saved" class="saved" hidden></p>
-        <div class="row">
-          <input
-            id="workerToken"
-            type="password"
-            spellcheck="false"
-            placeholder="Paste token from VM"
-            autocomplete="off"
-            data-lpignore="true"
-            data-1p-ignore="true"
-          />
-          <button type="button" id="toggle-token" class="text-btn">Show</button>
+      <!-- HOME -->
+      <section id="tab-home" class="tab-panel active" role="tabpanel">
+        <p class="pair-line">
+          <button type="button" id="pairing-btn" class="pair-btn">/pair --------</button>
+          <span class="muted">copy for Teams</span>
+        </p>
+        <p class="hint">
+          Status updates live. Pair in Teams, then send
+          <code>[alias] your prompt</code>.
+        </p>
+        <div class="home-actions">
+          <button type="button" id="reconnect" class="btn">Reconnect</button>
+          <button type="button" id="save-home" class="btn btn-main">Save &amp; connect</button>
         </div>
-      </label>
-
-      <div class="field">
-        <div class="row between">
-          <span>Projects</span>
-          <button type="button" id="add-project" class="text-btn">Add</button>
-        </div>
-        <p class="hint">Teams: <code>[alias] your prompt</code></p>
-        <div id="projects" class="projects"></div>
-      </div>
-
-      <label class="check">
-        <input id="dryRun" type="checkbox" />
-        <span>Dry run</span>
-      </label>
-
-      <label class="field">
-        <span>Agent command</span>
-        <input id="agentCommand" type="text" spellcheck="false" value="agent" />
-      </label>
-
-      <footer class="footer">
         <p id="save-msg" class="save-msg" hidden></p>
-        <button type="button" id="reconnect" class="btn">Reconnect</button>
-        <button type="button" id="save" class="btn btn-main">Save &amp; connect</button>
-      </footer>
+      </section>
+
+      <!-- PROJECTS -->
+      <section id="tab-projects" class="tab-panel" role="tabpanel" hidden>
+        <div class="row between">
+          <p class="hint" style="margin: 0">Aliases for Teams prompts</p>
+          <button type="button" id="add-project" class="text-btn">Add project</button>
+        </div>
+        <div id="projects" class="projects"></div>
+        <p id="projects-empty" class="empty">No projects yet. Add one to get started.</p>
+        <div class="home-actions">
+          <button type="button" id="save-projects" class="btn btn-main">Save projects</button>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="tab-settings" class="tab-panel" role="tabpanel" hidden>
+        <label class="field">
+          <span>Relay URL</span>
+          <input
+            id="relayUrl"
+            type="url"
+            spellcheck="false"
+            placeholder="wss://your-domain/ws"
+            autocomplete="off"
+          />
+        </label>
+
+        <label class="field">
+          <span>Worker token</span>
+          <p id="token-saved" class="saved" hidden></p>
+          <div class="row">
+            <input
+              id="workerToken"
+              type="password"
+              spellcheck="false"
+              placeholder="Paste token from VM"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+            />
+            <button type="button" id="toggle-token" class="text-btn">Show</button>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Agent command</span>
+          <input id="agentCommand" type="text" spellcheck="false" value="agent" />
+        </label>
+
+        <label class="check">
+          <input id="dryRun" type="checkbox" />
+          <span>Dry run</span>
+        </label>
+
+        <div class="home-actions">
+          <button type="button" id="save-settings" class="btn btn-main">Save &amp; connect</button>
+        </div>
+      </section>
     </div>
     <script src="renderer.js"></script>
   </body>

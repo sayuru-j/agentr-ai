@@ -9,12 +9,19 @@ function projectRow(alias = "", path = "") {
   row.className = "project-row";
   row.innerHTML = `
     <input class="alias" type="text" spellcheck="false" placeholder="alias" value="${escapeAttr(alias)}" />
-    <input class="path" type="text" spellcheck="false" placeholder="C:/path/to/repo" value="${escapeAttr(path)}" />
+    <input class="path" type="text" spellcheck="false" placeholder="No folder selected" value="${escapeAttr(path)}" readonly />
+    <button type="button" class="browse">Browse</button>
     <button type="button" class="remove" aria-label="Remove">×</button>
   `;
   row.querySelector(".remove").addEventListener("click", () => {
     row.remove();
-    if ($("projects").children.length === 0) addProject();
+    updateProjectsEmpty();
+  });
+  row.querySelector(".browse").addEventListener("click", async () => {
+    const picked = await window.agentr.pickFolder();
+    if (picked) {
+      row.querySelector(".path").value = picked;
+    }
   });
   return row;
 }
@@ -29,6 +36,12 @@ function escapeAttr(value) {
 
 function addProject(alias = "", path = "") {
   $("projects").appendChild(projectRow(alias, path));
+  updateProjectsEmpty();
+}
+
+function updateProjectsEmpty() {
+  const empty = $("projects").children.length === 0;
+  $("projects-empty").hidden = !empty;
 }
 
 function readProjects() {
@@ -69,8 +82,8 @@ function fillForm(config) {
   updateTokenSavedLabel(savedToken);
   $("projects").innerHTML = "";
   const entries = Object.entries(config.projects || {});
-  if (entries.length === 0) addProject("frontend", "");
-  else for (const [alias, path] of entries) addProject(alias, path);
+  for (const [alias, path] of entries) addProject(alias, path);
+  updateProjectsEmpty();
 }
 
 function readForm() {
@@ -95,9 +108,49 @@ function showMsg(text, isError = false) {
   }, 4000);
 }
 
+function switchTab(name) {
+  for (const btn of document.querySelectorAll(".tab")) {
+    const on = btn.dataset.tab === name;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  for (const panel of document.querySelectorAll(".tab-panel")) {
+    const on = panel.id === `tab-${name}`;
+    panel.classList.toggle("active", on);
+    panel.hidden = !on;
+  }
+}
+
+async function saveAll(connect = true) {
+  const cfg = readForm();
+  if (!cfg.relayUrl) {
+    showMsg("Relay URL required", true);
+    switchTab("settings");
+    return;
+  }
+  if (!cfg.workerToken) {
+    showMsg("Token required", true);
+    switchTab("settings");
+    return;
+  }
+  try {
+    const saved = await window.agentr.saveConfig(cfg);
+    savedToken = saved.workerToken;
+    $("workerToken").value = savedToken;
+    updateTokenSavedLabel(savedToken);
+    showMsg(connect ? "Saved — connecting…" : "Projects saved");
+  } catch (err) {
+    showMsg(err?.message || "Save failed", true);
+  }
+}
+
 async function boot() {
   $("win-min").addEventListener("click", () => window.agentr.windowMinimize());
   $("win-close").addEventListener("click", () => window.agentr.windowClose());
+
+  for (const btn of document.querySelectorAll(".tab")) {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  }
 
   const [config, live] = await Promise.all([
     window.agentr.getConfig(),
@@ -129,26 +182,9 @@ async function boot() {
     }
   });
 
-  $("save").addEventListener("click", async () => {
-    const cfg = readForm();
-    if (!cfg.relayUrl) {
-      showMsg("Relay URL required", true);
-      return;
-    }
-    if (!cfg.workerToken) {
-      showMsg("Token required", true);
-      return;
-    }
-    try {
-      const saved = await window.agentr.saveConfig(cfg);
-      savedToken = saved.workerToken;
-      $("workerToken").value = savedToken;
-      updateTokenSavedLabel(savedToken);
-      showMsg("Saved — connecting…");
-    } catch (err) {
-      showMsg(err?.message || "Save failed", true);
-    }
-  });
+  $("save-home").addEventListener("click", () => saveAll(true));
+  $("save-settings").addEventListener("click", () => saveAll(true));
+  $("save-projects").addEventListener("click", () => saveAll(false));
 
   $("reconnect").addEventListener("click", async () => {
     await window.agentr.reconnect();

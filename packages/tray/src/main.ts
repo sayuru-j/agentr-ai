@@ -4,6 +4,7 @@ import {
   Menu,
   BrowserWindow,
   ipcMain,
+  dialog,
   nativeImage,
   shell,
   Notification,
@@ -26,41 +27,41 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRELOAD_PATH = join(__dirname, "..", "preload.cjs");
 const UI_PATH = join(__dirname, "..", "ui", "index.html");
+const LOGO_CANDIDATES = [
+  join(__dirname, "..", "..", "assets", "logo.png"),
+  join(__dirname, "..", "ui", "logo.png"),
+];
 
 let tray: Tray | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let worker: AgentRelayWorker | null = null;
 let pairingCode = "--------";
 let status: WorkerStatus = "offline";
+let cachedAppIcon: Electron.NativeImage | null = null;
+let cachedTrayIcon: Electron.NativeImage | null = null;
 
-function iconForStatus(s: WorkerStatus): Electron.NativeImage {
-  const colors: Record<WorkerStatus, string> = {
-    offline: "#9CA3AF",
-    connecting: "#F59E0B",
-    online: "#22C55E",
-    busy: "#3B82F6",
-  };
-  const color = colors[s];
-  const size = 16;
-  const buf = Buffer.alloc(size * size * 4);
-  const rgb = hexToRgb(color);
-  for (let i = 0; i < size * size; i++) {
-    const o = i * 4;
-    buf[o] = rgb.r;
-    buf[o + 1] = rgb.g;
-    buf[o + 2] = rgb.b;
-    buf[o + 3] = 255;
+function resolveLogoPath(): string | null {
+  for (const candidate of LOGO_CANDIDATES) {
+    if (existsSync(candidate)) return candidate;
   }
-  return nativeImage.createFromBuffer(buf, { width: size, height: size });
+  return null;
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const h = hex.replace("#", "");
-  return {
-    r: parseInt(h.slice(0, 2), 16),
-    g: parseInt(h.slice(2, 4), 16),
-    b: parseInt(h.slice(4, 6), 16),
-  };
+function appIcon(): Electron.NativeImage {
+  if (cachedAppIcon) return cachedAppIcon;
+  const logoPath = resolveLogoPath();
+  cachedAppIcon = logoPath
+    ? nativeImage.createFromPath(logoPath)
+    : nativeImage.createEmpty();
+  return cachedAppIcon;
+}
+
+/** Tray icons look best at ~16–32px on Windows. */
+function trayIcon(): Electron.NativeImage {
+  if (cachedTrayIcon) return cachedTrayIcon;
+  const base = appIcon();
+  cachedTrayIcon = base.isEmpty() ? base : base.resize({ width: 16, height: 16 });
+  return cachedTrayIcon;
 }
 
 function broadcastStatus(): void {
@@ -115,7 +116,7 @@ function rebuildMenu(): void {
   ]);
   tray.setContextMenu(menu);
   tray.setToolTip(`AgentR (${status}) — /pair ${pairingCode}`);
-  tray.setImage(iconForStatus(status));
+  tray.setImage(trayIcon());
   broadcastStatus();
 }
 
@@ -132,6 +133,7 @@ function openSettings(): void {
     minWidth: 380,
     minHeight: 520,
     title: "AgentR",
+    icon: appIcon(),
     backgroundColor: "#f7f6f3",
     autoHideMenuBar: true,
     frame: false,
@@ -245,6 +247,21 @@ function registerIpc(): void {
   ipcMain.handle("window:close", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
   });
+
+  ipcMain.handle("dialog:pickFolder", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = win
+      ? await dialog.showOpenDialog(win, {
+          properties: ["openDirectory"],
+          title: "Select project folder",
+        })
+      : await dialog.showOpenDialog({
+          properties: ["openDirectory"],
+          title: "Select project folder",
+        });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0] ?? null;
+  });
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -261,7 +278,7 @@ if (!gotLock) {
     }
 
     registerIpc();
-    tray = new Tray(iconForStatus("offline"));
+    tray = new Tray(trayIcon());
     tray.on("double-click", () => openSettings());
     rebuildMenu();
     startWorker();
