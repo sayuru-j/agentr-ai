@@ -20,16 +20,14 @@ export interface TaskRunnerEvents {
 }
 
 /**
- * Spawns `agent --model <model> chat <prompt>` and streams output.
- * Defaults to Cursor Auto (`--model auto`) so usage stays off premium picks.
+ * Spawns headless `agent` against a project folder and streams output.
+ * Defaults to Cursor Auto (`--model auto`). Passes `--trust` because projects
+ * are already chosen by the user in the tray (no interactive trust prompt).
+ * Uses `--print` + `--force` so the CLI does not hang waiting for a TTY.
  *
- * Scans lines for risk patterns; when matched, pauses stdin-side progress
- * by requesting approval (MVP: we emit approval and kill/continue based on decision).
- *
- * Note: Cursor CLI may not expose a true "pause before shell" hook. The MVP
- * scans streamed output for risky command mentions and requests phone approval
- * before allowing the process to continue when dry-run injects such lines;
- * for live runs we still notify Teams and optionally terminate on reject.
+ * Scans lines for risk patterns; when matched, requests Teams approval
+ * (MVP: kill/continue based on decision). Cursor CLI may not expose a true
+ * "pause before shell" hook — risk scanning is best-effort on streamed output.
  */
 export class TaskRunner extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -41,7 +39,18 @@ export class TaskRunner extends EventEmitter {
     }
 
     const model = (opts.agentModel || "auto").trim() || "auto";
-    const args = ["--model", model, "chat", opts.prompt];
+    // Headless relay: trust user-picked projects, print to stdout, auto-allow tools.
+    const args = [
+      "--print",
+      "--trust",
+      "--force",
+      "--model",
+      model,
+      "--workspace",
+      opts.cwd,
+      "chat",
+      opts.prompt,
+    ];
     this.child = spawn(opts.agentCommand, args, {
       cwd: opts.cwd,
       env: process.env,
@@ -103,7 +112,10 @@ export class TaskRunner extends EventEmitter {
 
     await delay(300);
     const model = (opts.agentModel || "auto").trim() || "auto";
-    opts.onLog("stdout", `[dry-run] Would run: agent --model ${model} chat …\n`);
+    opts.onLog(
+      "stdout",
+      `[dry-run] Would run: agent --print --trust --force --model ${model} --workspace … chat …\n`,
+    );
     opts.onLog("stdout", "[dry-run] Done.\n");
     return 0;
   }
