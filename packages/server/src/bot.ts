@@ -12,7 +12,7 @@ import {
   type Activity,
 } from "botbuilder";
 import { randomUUID } from "node:crypto";
-import { buildApprovalCard, buildScreenshotCard, buildTaskCard } from "./cards.js";
+import { buildApprovalCard, buildTaskCard } from "./cards.js";
 import type { ServerConfig } from "./config.js";
 import type { ArtifactStore } from "./artifacts.js";
 import type { SessionStore, TaskRecord } from "./store.js";
@@ -366,17 +366,29 @@ export class AgentRelayBot {
 
   private async sendScreenshotCard(task: TaskRecord): Promise<void> {
     if (task.artifacts.length === 0) return;
-    const card = buildScreenshotCard({
-      taskId: task.taskId,
-      screenshots: task.artifacts.map((a) => ({
-        url: a.url,
-        label: a.label,
-      })),
-    });
+
+    // Adaptive Cards only show tiny non-expandable thumbs in many Teams clients.
+    // Send native image attachments so users can open full-size screenshots.
     await this.sendToConversation(
       task,
-      MessageFactory.attachment(CardFactory.adaptiveCard(card)),
+      MessageFactory.text(
+        `🖥 **Desktop screenshots** — ${task.artifacts.length} display${task.artifacts.length === 1 ? "" : "s"}`,
+      ),
     );
+
+    for (const shot of task.artifacts) {
+      await this.sendToConversation(task, {
+        type: "message",
+        text: shot.label,
+        attachments: [
+          {
+            contentType: shot.mimeType || "image/jpeg",
+            contentUrl: shot.url,
+            name: shot.name,
+          },
+        ],
+      });
+    }
   }
 
   async onApprovalRequest(
@@ -432,10 +444,6 @@ export class AgentRelayBot {
       projectAlias: task.projectAlias,
       logs: task.logs,
       hostname: worker?.hostname,
-      screenshots: task.artifacts.map((a) => ({
-        url: a.url,
-        label: a.label,
-      })),
     });
 
     if (!this.adapter || !task.activityId) {
