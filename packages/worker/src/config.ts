@@ -34,6 +34,9 @@ export function loadWorkerConfig(path = DEFAULT_CONFIG_PATH): WorkerConfig {
   return {
     ...defaultConfig(),
     ...raw,
+    relayUrl: (raw.relayUrl ?? defaultConfig().relayUrl).trim(),
+    workerToken: (raw.workerToken ?? "").trim(),
+    agentCommand: (raw.agentCommand ?? "agent").trim() || "agent",
     projects: raw.projects ?? {},
   };
 }
@@ -43,7 +46,13 @@ export function saveWorkerConfig(
   path = DEFAULT_CONFIG_PATH,
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(config, null, 2) + "\n", "utf8");
+  const cleaned: WorkerConfig = {
+    ...config,
+    relayUrl: config.relayUrl.trim(),
+    workerToken: config.workerToken.trim(),
+    agentCommand: (config.agentCommand || "agent").trim(),
+  };
+  writeFileSync(path, JSON.stringify(cleaned, null, 2) + "\n", "utf8");
 }
 
 export function ensureConfigDir(): string {

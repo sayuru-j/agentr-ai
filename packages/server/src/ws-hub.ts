@@ -1,5 +1,5 @@
 import {
-  extractBearerToken,
+  extractWorkerToken,
   safeEqualToken,
   safeParseRelayMessage,
   type ServerToWorker,
@@ -38,12 +38,17 @@ export class WorkerHub {
     this.wss = new WebSocketServer({ server: this.httpServer, path: "/ws" });
 
     this.wss.on("connection", (socket, req) => {
-      const token = extractBearerToken(req.headers.authorization);
-      if (
-        !this.config.workerToken ||
-        !token ||
-        !safeEqualToken(token, this.config.workerToken)
-      ) {
+      const token = extractWorkerToken(req);
+      const expected = this.config.workerToken.trim();
+      if (!expected) {
+        console.warn("[ws] WORKER_TOKEN is empty on server — rejecting worker");
+        socket.close(4001, "unauthorized");
+        return;
+      }
+      if (!token || !safeEqualToken(token, expected)) {
+        console.warn(
+          `[ws] worker unauthorized (token ${token ? "mismatch" : "missing"}, client sent ${token ? token.length : 0} chars, server expects ${expected.length})`,
+        );
         socket.close(4001, "unauthorized");
         return;
       }

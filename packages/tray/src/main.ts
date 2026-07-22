@@ -176,6 +176,16 @@ function startWorker(): void {
   worker.on("error", (err) => {
     console.error(`[tray] ${err.message}`);
   });
+  worker.on("unauthorized", (message) => {
+    console.error(`[tray] ${message}`);
+    if (Notification.isSupported()) {
+      new Notification({
+        title: "AgentR — unauthorized",
+        body: "Worker token rejected. Paste the VM WORKER_TOKEN and Save & connect.",
+      }).show();
+    }
+    openSettings();
+  });
 
   const needsSetup =
     !config.workerToken ||

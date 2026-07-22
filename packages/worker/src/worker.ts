@@ -17,6 +17,8 @@ export interface WorkerEvents {
   pairingCode: (code: string) => void;
   log: (line: string) => void;
   error: (err: Error) => void;
+  /** Fired when the relay rejects the worker token (no auto-reconnect). */
+  unauthorized: (message: string) => void;
 }
 
 type PendingApproval = {
@@ -101,12 +103,23 @@ export class AgentRelayWorker {
 
   private connect(): void {
     if (this.stopped) return;
+    const token = this.config.workerToken.trim();
+    if (!token || token.includes("PASTE_")) {
+      this.setStatus("offline");
+      this.emit(
+        "unauthorized",
+        "Worker token missing or still a placeholder. Paste the token from the VM (config.env / cli:status → Show worker token), then Save & connect.",
+      );
+      return;
+    }
+
     this.setStatus("connecting");
     this.emit("log", `Connecting to ${this.config.relayUrl}…`);
 
     const ws = new WebSocket(this.config.relayUrl, {
       headers: {
-        Authorization: `Bearer ${this.config.workerToken}`,
+        Authorization: `Bearer ${token}`,
+        "X-AgentR-Token": token,
       },
       rejectUnauthorized: !this.config.tlsInsecure,
     });
@@ -140,12 +153,19 @@ export class AgentRelayWorker {
     });
 
     ws.on("close", (code, reason) => {
-      this.emit(
-        "log",
-        `Disconnected (${code}) ${reason.toString() || ""}`.trim(),
-      );
+      const why = reason.toString() || "";
+      this.emit("log", `Disconnected (${code}) ${why}`.trim());
       this.ws = null;
       this.setStatus("offline");
+
+      if (code === 4001) {
+        this.emit(
+          "unauthorized",
+          "Relay rejected the worker token (unauthorized). Copy WORKER_TOKEN from the VM and Save & connect again.",
+        );
+        return;
+      }
+
       this.scheduleReconnect();
     });
 

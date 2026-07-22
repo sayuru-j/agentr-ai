@@ -9,7 +9,7 @@ export function renderEnvFile(opts: {
 MICROSOFT_APP_ID=${opts.appId}
 MICROSOFT_APP_PASSWORD=${opts.appSecret}
 MICROSOFT_APP_TENANT_ID=${opts.tenantId ?? ""}
-WORKER_TOKEN=${opts.workerToken}
+WORKER_TOKEN=${opts.workerToken.trim()}
 HTTP_PORT=3000
 WS_PORT=8080
 RELAY_DOMAIN=${opts.domain}
@@ -33,8 +33,11 @@ ${opts.domain} {
 		reverse_proxy 127.0.0.1:3000
 	}
 
-	handle /ws* {
-		reverse_proxy 127.0.0.1:8080
+  handle /ws* {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up Authorization {http.request.header.Authorization}
+			header_up X-AgentR-Token {http.request.header.X-AgentR-Token}
+		}
 	}
 
 	handle {

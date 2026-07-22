@@ -37,14 +37,23 @@ sudo systemctl restart agent-relay-server
 npm run cli:setup
 ```
 
-## Tray connects to localhost / disconnect 1006
+## Tray connects then disconnects (4001 unauthorized)
 
-Open **AgentR** settings (tray → Open AgentR…), set:
+The relay **rejected the worker token**.
 
-- `wss://YOUR_DOMAIN/ws`
-- real `WORKER_TOKEN`
+1. On the VM get the current token (setup regenerates it each run):
+   ```bash
+   npm run cli:status
+   # choose “Show worker token”
+   # or: grep WORKER_TOKEN /etc/agent-relay/config.env
+   ```
+2. In AgentR tray → paste that **exact** token (no spaces/quotes) → **Save & connect**
+3. Restart tray after saving if it was stuck reconnecting
 
-**Save & connect**.
+Server logs show token length mismatch:
+```bash
+journalctl -u agent-relay-server -n 30 --no-pager | grep unauthorized
+```
 
 ## Worker online but Teams says offline
 

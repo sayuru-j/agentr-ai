@@ -22,7 +22,7 @@ export function loadConfig(): ServerConfig {
     microsoftAppId,
     microsoftAppPassword,
     microsoftAppTenantId: process.env.MICROSOFT_APP_TENANT_ID ?? "",
-    workerToken: process.env.WORKER_TOKEN ?? "",
+    workerToken: (process.env.WORKER_TOKEN ?? "").trim(),
     httpPort: Number(process.env.HTTP_PORT ?? 3000),
     wsPort: Number(process.env.WS_PORT ?? 8080),
     mockMode,
