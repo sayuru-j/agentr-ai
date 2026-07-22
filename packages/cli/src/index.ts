@@ -20,9 +20,19 @@ program
   .option("--email <email>", "ACME / Let's Encrypt email")
   .option("--app-id <id>", "Microsoft App ID")
   .option("--app-secret <secret>", "Microsoft App Secret")
+  .option("--tenant-id <id>", "Microsoft Tenant ID (Single Tenant)")
   .option("--out <dir>", "Output directory for dry-run / teams zip")
   .action(async (opts) => {
-    await runSetup(opts);
+    await runSetup({
+      yes: opts.yes,
+      dryRun: opts.dryRun,
+      domain: opts.domain,
+      email: opts.email,
+      appId: opts.appId,
+      appSecret: opts.appSecret,
+      tenantId: opts.tenantId,
+      out: opts.out,
+    });
   });
 
 program

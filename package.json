@@ -9,11 +9,15 @@
   "scripts": {
     "build": "npm run build -w @agentr/shared && npm run build -w @agentr/server && npm run build -w @agentr/worker && npm run build -w @agentr/cli && npm run build -w @agentr/tray",
     "build:shared": "npm run build -w @agentr/shared",
+    "build:cli": "npm run build -w @agentr/cli",
+    "cli": "node packages/cli/dist/index.js",
+    "cli:setup": "node packages/cli/dist/index.js setup",
+    "cli:status": "node packages/cli/dist/index.js status",
+    "setup": "npm run cli:setup",
+    "relay": "npm run cli",
     "dev:server": "npm run dev -w @agentr/server",
     "dev:worker": "npm run start -w @agentr/worker",
     "dev:tray": "npm run start -w @agentr/tray",
-    "setup": "node packages/cli/dist/index.js setup",
-    "relay": "node packages/cli/dist/index.js",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {

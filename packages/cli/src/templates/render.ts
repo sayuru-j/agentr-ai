@@ -1,13 +1,14 @@
 export function renderEnvFile(opts: {
   appId: string;
   appSecret: string;
+  tenantId?: string;
   workerToken: string;
   domain: string;
 }): string {
   return `# AgentRelay relay configuration
 MICROSOFT_APP_ID=${opts.appId}
 MICROSOFT_APP_PASSWORD=${opts.appSecret}
-MICROSOFT_APP_TENANT_ID=
+MICROSOFT_APP_TENANT_ID=${opts.tenantId ?? ""}
 WORKER_TOKEN=${opts.workerToken}
 HTTP_PORT=3000
 WS_PORT=8080

@@ -20,6 +20,7 @@ export interface SetupOptions {
   email?: string;
   appId?: string;
   appSecret?: string;
+  tenantId?: string;
   out?: string;
 }
 
@@ -79,6 +80,16 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
         }));
   if (p.isCancel(appSecret)) return p.cancel("Cancelled");
 
+  const tenantId =
+    opts.tenantId ??
+    (opts.yes
+      ? ""
+      : await p.text({
+          message: "Microsoft Tenant ID (required for Single Tenant bots)",
+          placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        }));
+  if (p.isCancel(tenantId)) return p.cancel("Cancelled");
+
   const workerToken = generateWorkerToken();
   const base = rootOut(opts);
   const installDry = opts.dryRun || process.platform === "win32";
@@ -93,6 +104,7 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
     renderEnvFile({
       appId: String(appId),
       appSecret: String(appSecret),
+      tenantId: String(tenantId ?? ""),
       workerToken,
       domain: String(domain),
     }),
@@ -136,8 +148,39 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
     `#!/usr/bin/env bash
 set -euo pipefail
 
-sudo apt-get update -y
-sudo apt-get install -y git curl ca-certificates debian-keyring debian-archive-keyring apt-transport-https gnupg
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Quiet noisy sudo hostname warnings when /etc/hosts lacks the short hostname
+if ! grep -qE "[[:space:]]$(hostname)(\\s|\$)" /etc/hosts 2>/dev/null; then
+  echo "127.0.0.1 $(hostname)" | tee -a /etc/hosts >/dev/null || true
+fi
+
+# Prefer sudo only when not already root
+run() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+# Copy only when source and destination are different paths
+safe_cp() {
+  local from="\$1" to="\$2"
+  if [ ! -f "\$from" ]; then
+    echo "Missing: \$from" >&2
+    return 1
+  fi
+  if [ -e "\$to" ] && [ "\$(readlink -f "\$from")" = "\$(readlink -f "\$to")" ]; then
+    echo "Already in place: \$to"
+    return 0
+  fi
+  run mkdir -p "\$(dirname "\$to")"
+  run cp "\$from" "\$to"
+}
+
+run apt-get update -y
+run apt-get install -y git curl ca-certificates debian-keyring debian-archive-keyring apt-transport-https gnupg
 
 # nvm + Node ${NODE_VERSION}
 export NVM_DIR="\${NVM_DIR:-\$HOME/.nvm}"
@@ -154,33 +197,40 @@ nvm use ${NODE_VERSION}
 # Caddy
 if ! command -v caddy >/dev/null 2>&1; then
   echo "Installing Caddy…"
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-  sudo apt-get update -y
-  sudo apt-get install -y caddy
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | run gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | run tee /etc/apt/sources.list.d/caddy-stable.list
+  run apt-get update -y
+  run apt-get install -y caddy
 fi
 
-sudo mkdir -p /etc/agent-relay /etc/caddy
-sudo cp "$(dirname "$0")/config.env" /etc/agent-relay/config.env
-sudo chmod 600 /etc/agent-relay/config.env
-sudo cp "$(dirname "$0")/caddy/Caddyfile" /etc/caddy/Caddyfile
+run mkdir -p /etc/agent-relay /etc/caddy
+safe_cp "\$SRC_DIR/config.env" /etc/agent-relay/config.env
+run chmod 600 /etc/agent-relay/config.env
+safe_cp "\$SRC_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
 
-# Rewrite ExecStart to absolute nvm node if unit still says bare "node"
 NODE_BIN="$(command -v node)"
-UNIT_SRC="$(dirname "$0")/systemd/agent-relay-server.service"
+UNIT_SRC="\$SRC_DIR/systemd/agent-relay-server.service"
 UNIT_TMP="$(mktemp)"
-sed "s|^ExecStart=node |ExecStart=\${NODE_BIN} |" "\$UNIT_SRC" > "\$UNIT_TMP"
-sudo cp "\$UNIT_TMP" /etc/systemd/system/agent-relay-server.service
+sed -E "s|^ExecStart=[^[:space:]]+|ExecStart=\${NODE_BIN}|" "\$UNIT_SRC" > "\$UNIT_TMP"
+run cp "\$UNIT_TMP" /etc/systemd/system/agent-relay-server.service
 rm -f "\$UNIT_TMP"
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now agent-relay-server
-sudo systemctl enable --now caddy
-sudo systemctl reload caddy || sudo systemctl restart caddy
+run systemctl daemon-reload
+run systemctl enable --now agent-relay-server
+run systemctl enable --now caddy
+run systemctl reload caddy || run systemctl restart caddy
 echo "AgentRelay services installed (Node \$(node -v))."
+echo "Check: systemctl status agent-relay-server --no-pager"
+echo "Health: curl -sS https://\$(grep RELAY_DOMAIN /etc/agent-relay/config.env | cut -d= -f2)/health || curl -sS http://127.0.0.1:3000/health"
 `,
     "utf8",
   );
+
+  try {
+    chmodSync(join(base, "install-services.sh"), 0o755);
+  } catch {
+    /* windows */
+  }
 
   p.note(
     [
@@ -191,16 +241,21 @@ echo "AgentRelay services installed (Node \$(node -v))."
       `Worker token written to config.env (save it for the tray app)`,
       installDry
         ? "Dry-run / Windows: copy install-services.sh to your Linux VM and run it."
-        : "On Linux with sudo, run install-services.sh or enable units manually.",
+        : `Run: bash ${join(base, "install-services.sh")}`,
     ].join("\n"),
     "Wrote files",
   );
 
-  if (!installDry && process.getuid?.() === 0) {
+  if (!installDry && process.platform === "linux") {
     try {
-      execSync(`bash ${join(base, "install-services.sh")}`, { stdio: "inherit" });
+      execSync(`bash ${join(base, "install-services.sh")}`, {
+        stdio: "inherit",
+        env: process.env,
+      });
     } catch {
-      p.log.warn("Could not auto-enable systemd units. Run install-services.sh manually.");
+      p.log.warn(
+        `Could not auto-enable systemd units. Run:\n  bash ${join(base, "install-services.sh")}`,
+      );
     }
   }
 
