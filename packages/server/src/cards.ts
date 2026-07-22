@@ -1,5 +1,22 @@
 import type { TaskStatus } from "@agentr/shared";
 
+/** Adaptive Cards in Teams only support a Markdown subset — soften full .md. */
+function toTeamsMarkdown(raw: string): string {
+  let text = raw.replace(/\r\n/g, "\n").trimEnd();
+  if (!text.trim()) return "_Waiting for worker output…_";
+
+  // Headers → bold lines (Teams AC doesn't render # headings)
+  text = text.replace(/^#{1,6}\s+(.+)$/gm, "**$1**");
+
+  // Keep length bounded for Adaptive Card updates
+  if (text.length > 3500) {
+    text = "…\n" + text.slice(-3500);
+  }
+
+  // Adaptive Cards treat single \n weakly; keep paragraphs readable
+  return text;
+}
+
 export function buildTaskCard(opts: {
   taskId: string;
   prompt: string;
@@ -11,7 +28,7 @@ export function buildTaskCard(opts: {
   const logText =
     opts.logs.length === 0
       ? "_Waiting for worker output…_"
-      : "```\n" + opts.logs.slice(-40).join("").slice(-3500) + "\n```";
+      : toTeamsMarkdown(opts.logs.join(""));
 
   const statusEmoji: Record<TaskStatus, string> = {
     running: "⏳",
@@ -54,7 +71,6 @@ export function buildTaskCard(opts: {
         type: "TextBlock",
         text: logText,
         wrap: true,
-        fontType: "Monospace",
         size: "Small",
       },
     ],

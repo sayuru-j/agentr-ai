@@ -131,6 +131,8 @@ export class TaskRunner extends EventEmitter {
     }
 
     const model = (opts.agentModel || "auto").trim() || "auto";
+    // Prefer Markdown answers so Teams Adaptive Cards can render formatting.
+    const prompt = `${opts.prompt.trim()}\n\nReply in Markdown.`;
     const args = [
       "--print",
       "--output-format",
@@ -141,7 +143,7 @@ export class TaskRunner extends EventEmitter {
       "--model",
       model,
       `--workspace=${opts.cwd}`,
-      opts.prompt,
+      prompt,
     ];
 
     const useShell = process.platform === "win32";
