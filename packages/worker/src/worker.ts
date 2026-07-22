@@ -228,12 +228,10 @@ export class AgentRelayWorker {
         this.emit("log", `Server ack: ${msg.message}`);
         break;
       case "task.create":
-        await this.runTask(
-          msg.taskId,
-          msg.prompt,
-          msg.projectAlias,
-          Boolean(msg.captureScreenshots),
-        );
+        await this.runTask(msg.taskId, msg.prompt, msg.projectAlias);
+        break;
+      case "screenshot.capture":
+        await this.handleScreenshotCapture(msg.requestId);
         break;
       case "task.approval_response": {
         const pending = this.pendingApprovals.get(msg.approvalId);
@@ -273,7 +271,6 @@ export class AgentRelayWorker {
     taskId: string,
     prompt: string,
     projectAlias?: string,
-    captureScreenshots = false,
   ): Promise<void> {
     const cwd = this.resolveCwd(projectAlias);
     if (!cwd) {
@@ -300,7 +297,6 @@ export class AgentRelayWorker {
       agentCommand: this.config.agentCommand,
       agentModel: this.config.agentModel,
       dryRun: this.config.dryRun,
-      captureScreenshots,
       onLog: (stream, chunk) => {
         this.emit("taskLog", { taskId, stream, chunk });
         this.send({
@@ -322,7 +318,6 @@ export class AgentRelayWorker {
         });
         return new Promise<boolean>((resolve) => {
           this.pendingApprovals.set(approvalId, { resolve });
-          // Auto-reject after 10 minutes
           setTimeout(() => {
             if (this.pendingApprovals.has(approvalId)) {
               this.pendingApprovals.delete(approvalId);
@@ -337,7 +332,6 @@ export class AgentRelayWorker {
     this.setStatus(this.ws ? "online" : "offline");
     this.emit("taskEnd", { taskId, exitCode: exitCode ?? 1 });
 
-    // Finish the task card first, then upload screenshots over HTTPS.
     this.send({
       type: "task.status",
       taskId,
@@ -350,29 +344,17 @@ export class AgentRelayWorker {
             ? "Cancelled"
             : `Exited with code ${exitCode}`,
     });
-
-    if (captureScreenshots && !this.config.dryRun) {
-      await this.sendDesktopScreenshots(taskId);
-    }
   }
 
-  private async sendDesktopScreenshots(taskId: string): Promise<void> {
+  private async handleScreenshotCapture(requestId: string): Promise<void> {
+    this.setStatus("busy");
     try {
-      await new Promise((r) => setTimeout(r, 1500));
       const screens = await captureAllDisplays();
-      this.emit("log", `Captured ${screens.length} display screenshot(s) — uploading via HTTPS…`);
-      this.send({
-        type: "task.log",
-        taskId,
-        stream: "stdout",
-        chunk: `\n[screenshot] Captured ${screens.length} display(s), uploading…\n`,
-        ts: Date.now(),
-      });
-
+      this.emit("log", `Screenshot request ${requestId.slice(0, 8)} — ${screens.length} display(s)`);
       const result = await uploadScreenshotsHttps({
         relayUrl: this.config.relayUrl,
         workerToken: this.config.workerToken,
-        taskId,
+        taskId: requestId,
         screenshots: screens.map((s) => ({
           name: s.name,
           mimeType: s.mimeType,
@@ -381,29 +363,15 @@ export class AgentRelayWorker {
         })),
         tlsInsecure: this.config.tlsInsecure,
       });
-
       if (!result.ok) {
         throw new Error(result.error || "upload failed");
       }
-
       this.emit("log", "Screenshot upload complete");
-      this.send({
-        type: "task.log",
-        taskId,
-        stream: "stdout",
-        chunk: `\n[screenshot] Uploaded to relay — check Teams for images\n`,
-        ts: Date.now(),
-      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.emit("error", new Error(`Screenshot failed: ${message}`));
-      this.send({
-        type: "task.log",
-        taskId,
-        stream: "stderr",
-        chunk: `\n[agent-relay] Screenshot capture/upload failed: ${message}\n`,
-        ts: Date.now(),
-      });
+    } finally {
+      this.setStatus(this.ws ? "online" : "offline");
     }
   }
 }

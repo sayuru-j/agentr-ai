@@ -1,6 +1,5 @@
 import {
   parseProjectAlias,
-  parseScreenshotFlag,
   type TaskApprovalResponse,
 } from "@agentr/shared";
 import {
@@ -125,13 +124,52 @@ export class AgentRelayBot {
       }
       if (this.store.pair(userId, code)) {
         await context.sendActivity(
-          "Paired successfully. Send `@alias your prompt` (add `/ss` for screenshots). AgentR ignores normal chat.",
+          "Paired successfully. Send `@alias your prompt`, or `/ss` for a desktop screenshot. AgentR ignores normal chat.",
         );
       } else {
         await context.sendActivity(
           "Invalid pairing code. Check the code shown in the tray app / worker logs.",
         );
       }
+      return;
+    }
+
+    if (lower === "/ss" || lower.startsWith("/ss ")) {
+      if (!this.store.isPaired(userId)) {
+        await context.sendActivity(
+          "Not paired. Open the tray app for a pairing code, then send `/pair <code>`.",
+        );
+        return;
+      }
+      const worker = this.store.getWorker();
+      if (!worker) {
+        await context.sendActivity("Worker is offline. Start the tray app on your PC.");
+        return;
+      }
+
+      const requestId = randomUUID();
+      const conversation = {
+        serviceUrl: context.activity.serviceUrl,
+        conversationId: context.activity.conversation.id,
+        activityId: context.activity.id,
+        tenantId: context.activity.conversation.tenantId,
+      };
+      this.store.createTask({
+        taskId: requestId,
+        threadId: conversation.conversationId,
+        prompt: "Desktop screenshots",
+        conversation,
+      });
+
+      const ok = this.hub.send({
+        type: "screenshot.capture",
+        requestId,
+      });
+      if (!ok) {
+        await context.sendActivity("Worker disconnected — could not request screenshots.");
+        return;
+      }
+      await context.sendActivity("Capturing desktop screenshots…");
       return;
     }
 
@@ -159,8 +197,8 @@ export class AgentRelayBot {
           "`/projects` — list worker project aliases",
           "`/status` — worker connection status",
           "`/help` — this message",
+          "`/ss` — capture current desktop (all monitors), no agent",
           "`@alias your prompt` — run a task on a project",
-          "`/ss @alias your prompt` — run + desktop screenshots",
         ].join("\n"),
       );
       return;
@@ -179,22 +217,19 @@ export class AgentRelayBot {
       return;
     }
 
-    const { captureScreenshots, text: withoutSs } = parseScreenshotFlag(text);
-    const { alias, prompt } = parseProjectAlias(withoutSs);
+    const { alias, prompt } = parseProjectAlias(text);
 
-    // Task prompts must use @alias (after optional /ss).
+    // Task prompts must use @alias.
     if (!alias) {
       await context.sendActivity(
-        "Use `@alias your prompt` (optionally with `/ss`). Example: `/ss @sample open the app`",
+        "Use `@alias your prompt`, or `/ss` for screenshots. Example: `@sample what's in this folder?`",
       );
       return;
     }
 
     if (!prompt) {
       await context.sendActivity(
-        captureScreenshots
-          ? "Add a prompt after `/ss @alias`, e.g. `/ss @sample open the app`."
-          : "Add a prompt after `@alias`, e.g. `@sample what's in this folder?`",
+        "Add a prompt after `@alias`, e.g. `@sample what's in this folder?`",
       );
       return;
     }
@@ -207,19 +242,17 @@ export class AgentRelayBot {
       tenantId: context.activity.conversation.tenantId,
     };
 
-    const displayPrompt = captureScreenshots ? `${prompt}  (/ss)` : prompt;
-
     const record = this.store.createTask({
       taskId,
       threadId: context.activity.conversation.id,
-      prompt: displayPrompt,
+      prompt,
       projectAlias: alias,
       conversation,
     });
 
     const card = buildTaskCard({
       taskId,
-      prompt: displayPrompt,
+      prompt,
       status: "running",
       projectAlias: alias,
       logs: [],
@@ -238,7 +271,6 @@ export class AgentRelayBot {
       prompt,
       threadId: record.threadId,
       projectAlias: alias,
-      captureScreenshots,
       conversation,
     });
 
@@ -300,7 +332,7 @@ export class AgentRelayBot {
     ]);
   }
 
-  /** Called after HTTPS upload (preferred) or legacy WSS artifact. */
+  /** HTTPS upload finished — post one screenshot card (not also embed in task card). */
   async onScreenshotsUploaded(
     taskId: string,
     shots: Array<{ name: string; label: string; url: string }>,
@@ -324,8 +356,11 @@ export class AgentRelayBot {
       setTimeout(() => {
         this.artifactTimers.delete(task.taskId);
         void this.sendScreenshotCard(task!);
-        void this.updateTaskCard(task!);
-      }, 400),
+        // Mark screenshot-only requests complete without a second image embed.
+        if (task!.prompt === "Desktop screenshots") {
+          this.store.setStatus(task!.taskId, "succeeded");
+        }
+      }, 200),
     );
   }
 

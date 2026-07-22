@@ -33,11 +33,16 @@ export const TaskCreateSchema = z.object({
   prompt: z.string(),
   threadId: z.string(),
   projectAlias: z.string().optional(),
-  /** When true, worker captures all monitors after the task. */
-  captureScreenshots: z.boolean().optional(),
   conversation: ConversationRefSchema,
 });
 export type TaskCreate = z.infer<typeof TaskCreateSchema>;
+
+/** Server → Worker: capture all monitors now (no agent). */
+export const ScreenshotCaptureSchema = z.object({
+  type: z.literal("screenshot.capture"),
+  requestId: z.string(),
+});
+export type ScreenshotCapture = z.infer<typeof ScreenshotCaptureSchema>;
 
 /** Worker → Server: streamed log chunk */
 export const TaskLogSchema = z.object({
@@ -108,6 +113,7 @@ export type ServerAck = z.infer<typeof ServerAckSchema>;
 
 export const ServerToWorkerSchema = z.discriminatedUnion("type", [
   TaskCreateSchema,
+  ScreenshotCaptureSchema,
   TaskApprovalResponseSchema,
   TaskCancelSchema,
   ServerAckSchema,

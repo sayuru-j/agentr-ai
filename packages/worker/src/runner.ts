@@ -11,8 +11,6 @@ export interface RunTaskOptions {
   /** Cursor CLI model id; default `auto`. */
   agentModel?: string;
   dryRun?: boolean;
-  /** Append “open UI for screenshot” guidance when `/ss` was requested. */
-  captureScreenshots?: boolean;
   requestApproval: (command: string, reason: string) => Promise<boolean>;
   onLog: (stream: "stdout" | "stderr", chunk: string) => void;
 }
@@ -133,10 +131,7 @@ export class TaskRunner extends EventEmitter {
     }
 
     const model = (opts.agentModel || "auto").trim() || "auto";
-    let prompt = `${opts.prompt.trim()}\n\nReply in Markdown.`;
-    if (opts.captureScreenshots) {
-      prompt += `\n\nWhen you are done, open any UI you built (browser preview, app window, file viewer, etc.) so it is visible on screen — desktop screenshots of all monitors will be captured after this task.`;
-    }
+    const prompt = `${opts.prompt.trim()}\n\nReply in Markdown.`;
     const args = [
       "--print",
       "--output-format",
