@@ -2,6 +2,8 @@ import {
   app,
   Tray,
   Menu,
+  BrowserWindow,
+  ipcMain,
   nativeImage,
   shell,
   Notification,
@@ -14,11 +16,19 @@ import {
   DEFAULT_CONFIG_PATH,
   saveWorkerConfig,
   defaultConfig,
+  type WorkerConfig,
   type WorkerStatus,
 } from "@agentr/worker";
 import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PRELOAD_PATH = join(__dirname, "..", "preload.cjs");
+const UI_PATH = join(__dirname, "..", "ui", "index.html");
 
 let tray: Tray | null = null;
+let settingsWindow: BrowserWindow | null = null;
 let worker: AgentRelayWorker | null = null;
 let pairingCode = "--------";
 let status: WorkerStatus = "offline";
@@ -53,11 +63,18 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   };
 }
 
+function broadcastStatus(): void {
+  settingsWindow?.webContents.send("status:changed", {
+    status,
+    pairingCode,
+  });
+}
+
 function rebuildMenu(): void {
   if (!tray) return;
   const menu = Menu.buildFromTemplate([
     {
-      label: `AgentRelay — ${status}`,
+      label: `AgentR — ${status}`,
       enabled: false,
     },
     {
@@ -65,13 +82,17 @@ function rebuildMenu(): void {
       click: () => {
         if (Notification.isSupported()) {
           new Notification({
-            title: "AgentRelay pairing code",
+            title: "AgentR pairing code",
             body: `In Teams send: /pair ${pairingCode}`,
           }).show();
         }
       },
     },
     { type: "separator" },
+    {
+      label: "Open AgentR…",
+      click: () => openSettings(),
+    },
     {
       label: "Reconnect",
       click: () => worker?.reconnect(),
@@ -81,18 +102,6 @@ function rebuildMenu(): void {
       click: () => {
         ensureConfigDir();
         void shell.openPath(DEFAULT_CONFIG_DIR);
-      },
-    },
-    {
-      label: "Edit config.json",
-      click: () => {
-        ensureConfigDir();
-        if (!existsSync(DEFAULT_CONFIG_PATH)) {
-          const cfg = defaultConfig();
-          cfg.dryRun = true;
-          saveWorkerConfig(cfg);
-        }
-        void shell.openPath(DEFAULT_CONFIG_PATH);
       },
     },
     { type: "separator" },
@@ -105,8 +114,42 @@ function rebuildMenu(): void {
     },
   ]);
   tray.setContextMenu(menu);
-  tray.setToolTip(`AgentRelay (${status}) — /pair ${pairingCode}`);
+  tray.setToolTip(`AgentR (${status}) — /pair ${pairingCode}`);
   tray.setImage(iconForStatus(status));
+  broadcastStatus();
+}
+
+function openSettings(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 560,
+    height: 720,
+    minWidth: 480,
+    minHeight: 640,
+    title: "AgentR",
+    backgroundColor: "#14110f",
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: PRELOAD_PATH,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  void settingsWindow.loadFile(UI_PATH);
+  settingsWindow.once("ready-to-show", () => {
+    settingsWindow?.show();
+  });
+  settingsWindow.on("closed", () => {
+    settingsWindow = null;
+  });
 }
 
 function startWorker(): void {
@@ -134,32 +177,74 @@ function startWorker(): void {
     console.error(`[tray] ${err.message}`);
   });
 
-  if (!config.workerToken || config.relayUrl.includes("localhost")) {
-    console.warn(
-      "[tray] Configure ~/.agent-relay/config.json (relayUrl + workerToken) then Reconnect.",
-    );
+  const needsSetup =
+    !config.workerToken ||
+    config.workerToken.includes("PASTE_") ||
+    config.relayUrl.includes("localhost");
+
+  if (needsSetup) {
+    console.warn("[tray] Open settings to paste worker token and relay URL.");
   }
 
   worker.start();
   pairingCode = worker.getPairingCode();
   rebuildMenu();
+
+  if (needsSetup) {
+    openSettings();
+  }
+}
+
+function registerIpc(): void {
+  ipcMain.handle("config:get", () => loadWorkerConfig());
+
+  ipcMain.handle("config:save", (_event, partial: Partial<WorkerConfig>) => {
+    const next: WorkerConfig = {
+      ...loadWorkerConfig(),
+      ...partial,
+      projects: partial.projects ?? loadWorkerConfig().projects,
+    };
+    if (!next.relayUrl?.trim()) {
+      throw new Error("Relay URL is required");
+    }
+    if (!next.workerToken?.trim()) {
+      throw new Error("Worker token is required");
+    }
+    saveWorkerConfig(next);
+    worker?.updateConfig(next);
+    worker?.reconnect();
+    return next;
+  });
+
+  ipcMain.handle("status:get", () => ({ status, pairingCode }));
+
+  ipcMain.handle("worker:reconnect", () => {
+    worker?.reconnect();
+    return { ok: true };
+  });
 }
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  app.on("second-instance", () => {
+    openSettings();
+  });
+
   app.whenReady().then(() => {
     if (process.platform === "darwin") {
       app.dock?.hide();
     }
 
+    registerIpc();
     tray = new Tray(iconForStatus("offline"));
+    tray.on("double-click", () => openSettings());
     rebuildMenu();
     startWorker();
   });
 
   app.on("window-all-closed", () => {
-    // Keep running in tray — do not quit
+    // Keep running in tray
   });
 }

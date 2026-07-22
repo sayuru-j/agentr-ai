@@ -84,37 +84,21 @@ npm run dev:server
 
 ## 3. Host PC (tray / worker)
 
-### Config
+### Tray app (recommended)
 
 ```bash
-npm run build -w @agentr/worker
-node packages/worker/dist/cli.js init
-```
-
-Edit `%USERPROFILE%\.agent-relay\config.json`:
-
-```json
-{
-  "relayUrl": "wss://YOUR_DOMAIN/ws",
-  "workerToken": "paste-from-vm-config.env",
-  "projects": {
-    "frontend": "C:/dev/frontend",
-    "backend": "C:/dev/backend"
-  },
-  "agentCommand": "agent",
-  "dryRun": false
-}
-```
-
-Set `"dryRun": true` to test without Cursor CLI (streams a fake run; prompts containing `npm install` or `--approve-test` exercise approval cards).
-
-### Tray app
-
-```bash
+npm run build
 npm run dev:tray
 ```
 
-Tray menu: status, pairing code, Reconnect, Open config, Quit.
+The tray opens an **AgentR** settings window where you can:
+
+- Paste **Relay URL** (`wss://YOUR_DOMAIN/ws`)
+- Paste **Worker token** (from VM `config.env`)
+- Add project aliases → local paths
+- Click **Save & connect** (persists to `%USERPROFILE%\.agent-relay\config.json`)
+
+Tray menu: Open AgentR…, pairing code, Reconnect, Quit. Double-click the tray icon to reopen settings.
 
 ### Headless worker (no tray)
 
@@ -124,22 +108,85 @@ npm run dev:worker
 node packages/worker/dist/cli.js --dry-run
 ```
 
-## 4. Pair and run a prompt
+## 4. After adding the bot to Teams
 
-1. Ensure tray/worker shows **online** and a pairing code.
-2. In Teams, message the AgentRelay bot:
+Do these in order. Do not skip ahead to `/pair` until the tray is **online**.
+
+### Step A — Confirm the relay is healthy (VM)
+
+```bash
+curl -sS https://YOUR_DOMAIN/health
+# expect: {"ok":true,"mockMode":false,...}
+```
+
+If that fails, fix Caddy/DNS/NSG before continuing.
+
+### Step B — Configure the PC worker
+
+1. On the VM, copy the token:
+   ```bash
+   grep WORKER_TOKEN /etc/agent-relay/config.env
+   ```
+2. On the PC start the tray:
+   ```powershell
+   npm run build
+   npm run dev:tray
+   ```
+3. In the **AgentR** window:
+   - Relay URL → `wss://YOUR_DOMAIN/ws`
+   - Worker token → paste from step 1
+   - Add at least one project alias → local folder
+   - Click **Save & connect**
+4. Confirm status shows **online**.  
+   If it stays offline, check the token/URL and click **Reconnect**.
+
+### Step C — Pair your Teams user
+
+1. Open a **1:1 chat** with the **AgentR** bot in Teams (the app you sideloaded).
+2. Click the pairing code in the tray menu (or read it from the tray tooltip / terminal).
+3. Send exactly:
    ```
    /pair AB12-CD34
    ```
-3. Check worker projects:
-   ```
-   /projects
-   ```
-4. Send a task (optional project alias):
-   ```
-   [frontend] Add a loading spinner to the settings page
-   ```
-5. When the agent hits a risky shell command, tap **Approve** or **Reject** on the Adaptive Card.
+   (use your real code)
+4. Bot should reply that you are paired.
+
+If there is **no reply**:
+- App ID/secret/tenant in `/etc/agent-relay/config.env` must match the Azure Bot
+- Check VM logs: `journalctl -u agent-relay-server -n 50 --no-pager`
+
+### Step D — Verify worker from Teams
+
+```
+/projects
+```
+or
+```
+/status
+```
+
+You should see your PC hostname and project aliases.  
+If it says worker offline, the tray is not connected — go back to Step B.
+
+### Step E — Run your first task
+
+```
+[frontend] List the files in the project root
+```
+
+- `[frontend]` must match a key in `projects` in `config.json`
+- An Adaptive Card should appear with live logs
+- If a risky command is detected, tap **Approve** or **Reject**
+
+### Quick checklist
+
+| Done? | Item |
+|-------|------|
+| | `https://YOUR_DOMAIN/health` returns ok |
+| | AgentR tray: token + URL saved, status **online** |
+| | `/pair <code>` succeeds in Teams |
+| | `/projects` shows your aliases |
+| | A prompt returns a task card with logs |
 
 ### Mock mode (no Teams)
 

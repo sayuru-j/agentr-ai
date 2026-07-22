@@ -18,7 +18,7 @@ export const DEFAULT_CONFIG_PATH = join(DEFAULT_CONFIG_DIR, "config.json");
 
 export function defaultConfig(): WorkerConfig {
   return {
-    relayUrl: "wss://localhost/ws",
+    relayUrl: "wss://agent.example.com/ws",
     workerToken: "",
     projects: {},
     agentCommand: "agent",

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <div class="brand">
+          <img class="logo" src="logo.png" alt="" width="48" height="48" />
+          <div>
+            <h1>AgentR</h1>
+            <p class="tag">Local agent · Teams relay</p>
+          </div>
+        </div>
+        <div class="status-block">
+          <span id="status-dot" class="dot offline" aria-hidden="true"></span>
+          <div>
+            <div id="status-label" class="status-label">offline</div>
+            <button type="button" id="pairing-btn" class="pairing" title="Copy pairing command">
+              /pair --------
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="panel">
+          <h2>Connection</h2>
+          <p class="hint">Paste values from the VM setup (`config.env`).</p>
+
+          <label class="field">
+            <span>Relay WebSocket URL</span>
+            <input
+              id="relayUrl"
+              type="url"
+              spellcheck="false"
+              placeholder="wss://agent.example.com/ws"
+              autocomplete="off"
+            />
+          </label>
+
+          <label class="field">
+            <span>Worker token</span>
+            <div class="token-row">
+              <input
+                id="workerToken"
+                type="password"
+                spellcheck="false"
+                placeholder="Paste WORKER_TOKEN here"
+                autocomplete="off"
+              />
+              <button type="button" id="toggle-token" class="ghost" aria-label="Show token">
+                Show
+              </button>
+            </div>
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Projects</h2>
+            <button type="button" id="add-project" class="ghost">Add</button>
+          </div>
+          <p class="hint">Aliases used as <code>[alias]</code> in Teams prompts.</p>
+          <div id="projects" class="projects"></div>
+        </section>
+
+        <section class="panel options">
+          <label class="check">
+            <input id="dryRun" type="checkbox" />
+            <span>Dry run (don’t spawn Cursor CLI)</span>
+          </label>
+          <label class="field compact">
+            <span>Agent command</span>
+            <input id="agentCommand" type="text" spellcheck="false" value="agent" />
+          </label>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p id="save-msg" class="save-msg" hidden></p>
+        <div class="actions">
+          <button type="button" id="reconnect" class="ghost">Reconnect</button>
+          <button type="button" id="save" class="primary">Save &amp; connect</button>
+        </div>
+      </footer>
+    </div>
+    <script src="renderer.js"></script>
+  </body>
+</html>
