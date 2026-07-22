@@ -8,6 +8,8 @@ export interface RunTaskOptions {
   prompt: string;
   cwd: string;
   agentCommand: string;
+  /** Cursor CLI model id; default `auto`. */
+  agentModel?: string;
   dryRun?: boolean;
   requestApproval: (command: string, reason: string) => Promise<boolean>;
   onLog: (stream: "stdout" | "stderr", chunk: string) => void;
@@ -18,7 +20,9 @@ export interface TaskRunnerEvents {
 }
 
 /**
- * Spawns `agent chat <prompt>` and streams output.
+ * Spawns `agent --model <model> chat <prompt>` and streams output.
+ * Defaults to Cursor Auto (`--model auto`) so usage stays off premium picks.
+ *
  * Scans lines for risk patterns; when matched, pauses stdin-side progress
  * by requesting approval (MVP: we emit approval and kill/continue based on decision).
  *
@@ -36,7 +40,8 @@ export class TaskRunner extends EventEmitter {
       return this.runDry(opts);
     }
 
-    const args = ["chat", opts.prompt];
+    const model = (opts.agentModel || "auto").trim() || "auto";
+    const args = ["--model", model, "chat", opts.prompt];
     this.child = spawn(opts.agentCommand, args, {
       cwd: opts.cwd,
       env: process.env,
@@ -97,7 +102,8 @@ export class TaskRunner extends EventEmitter {
     }
 
     await delay(300);
-    opts.onLog("stdout", "[dry-run] Would run: agent chat …\n");
+    const model = (opts.agentModel || "auto").trim() || "auto";
+    opts.onLog("stdout", `[dry-run] Would run: agent --model ${model} chat …\n`);
     opts.onLog("stdout", "[dry-run] Done.\n");
     return 0;
   }

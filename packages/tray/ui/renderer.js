@@ -78,6 +78,7 @@ function fillForm(config) {
   $("relayUrl").value = config.relayUrl || "";
   $("workerToken").value = savedToken;
   $("agentCommand").value = config.agentCommand || "agent";
+  $("agentModel").value = config.agentModel || "auto";
   $("dryRun").checked = Boolean(config.dryRun);
   updateTokenSavedLabel(savedToken);
   $("projects").innerHTML = "";
@@ -92,6 +93,7 @@ function readForm() {
     relayUrl: $("relayUrl").value.trim(),
     workerToken: typed || savedToken,
     agentCommand: $("agentCommand").value.trim() || "agent",
+    agentModel: $("agentModel").value.trim() || "auto",
     dryRun: $("dryRun").checked,
     projects: readProjects(),
   };

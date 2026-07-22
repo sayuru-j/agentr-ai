@@ -275,6 +275,7 @@ export class AgentRelayWorker {
       prompt,
       cwd,
       agentCommand: this.config.agentCommand,
+      agentModel: this.config.agentModel,
       dryRun: this.config.dryRun,
       onLog: (stream, chunk) => {
         this.send({
