@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @agentr/shared && npm run build -w @agentr/server && npm run build -w @agentr/worker && npm run build -w @agentr/cli && npm run build -w @agentr/tray",
+    "build:ps1": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1",
     "build:shared": "npm run build -w @agentr/shared",
     "build:cli": "npm run build -w @agentr/cli",
     "cli": "node packages/cli/dist/index.js",
