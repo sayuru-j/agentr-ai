@@ -1,11 +1,11 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "id": "{{APP_ID}}",
   "packageName": "com.agentr.relay",
   "developer": {
-    "name": "AgentR",
+    "name": "Sayuru J. Silva",
     "websiteUrl": "https://{{BOT_DOMAIN}}",
     "privacyUrl": "https://{{BOT_DOMAIN}}/privacy",
     "termsOfUseUrl": "https://{{BOT_DOMAIN}}/terms"
