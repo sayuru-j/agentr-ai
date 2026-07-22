@@ -12,8 +12,9 @@ import {
   type Activity,
 } from "botbuilder";
 import { randomUUID } from "node:crypto";
-import { buildApprovalCard, buildTaskCard } from "./cards.js";
+import { buildApprovalCard, buildScreenshotCard, buildTaskCard } from "./cards.js";
 import type { ServerConfig } from "./config.js";
+import type { ArtifactStore } from "./artifacts.js";
 import type { SessionStore, TaskRecord } from "./store.js";
 import type { WorkerHub } from "./ws-hub.js";
 
@@ -27,11 +28,13 @@ type ApprovalPayload = {
 export class AgentRelayBot {
   readonly adapter: CloudAdapter | null;
   private logUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private artifactTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly config: ServerConfig,
     private readonly store: SessionStore,
     private readonly hub: WorkerHub,
+    private readonly artifacts: ArtifactStore,
   ) {
     if (config.mockMode) {
       this.adapter = null;
@@ -247,6 +250,56 @@ export class AgentRelayBot {
     this.scheduleCardUpdate(task);
   }
 
+  async onTaskArtifact(msg: {
+    taskId: string;
+    name: string;
+    mimeType: string;
+    dataBase64: string;
+    label?: string;
+  }): Promise<void> {
+    const stored = this.artifacts.save({
+      taskId: msg.taskId,
+      name: msg.name,
+      mimeType: msg.mimeType,
+      dataBase64: msg.dataBase64,
+      label: msg.label,
+    });
+    const task = this.store.addArtifact(msg.taskId, {
+      name: stored.name,
+      mimeType: stored.mimeType,
+      label: stored.label,
+      url: stored.url,
+    });
+    if (!task) return;
+
+    // Debounce: wait until all monitors arrive, then post one screenshot card.
+    const existing = this.artifactTimers.get(task.taskId);
+    if (existing) clearTimeout(existing);
+    this.artifactTimers.set(
+      task.taskId,
+      setTimeout(() => {
+        this.artifactTimers.delete(task.taskId);
+        void this.sendScreenshotCard(task);
+        void this.updateTaskCard(task);
+      }, 600),
+    );
+  }
+
+  private async sendScreenshotCard(task: TaskRecord): Promise<void> {
+    if (task.artifacts.length === 0) return;
+    const card = buildScreenshotCard({
+      taskId: task.taskId,
+      screenshots: task.artifacts.map((a) => ({
+        url: a.url,
+        label: a.label,
+      })),
+    });
+    await this.sendToConversation(
+      task,
+      MessageFactory.attachment(CardFactory.adaptiveCard(card)),
+    );
+  }
+
   async onApprovalRequest(
     taskId: string,
     approvalId: string,
@@ -300,6 +353,10 @@ export class AgentRelayBot {
       projectAlias: task.projectAlias,
       logs: task.logs,
       hostname: worker?.hostname,
+      screenshots: task.artifacts.map((a) => ({
+        url: a.url,
+        label: a.label,
+      })),
     });
 
     if (!this.adapter || !task.activityId) {

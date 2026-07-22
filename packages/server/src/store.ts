@@ -2,6 +2,13 @@ import type { ConversationRef, TaskStatus } from "@agentr/shared";
 import { generatePairingCode } from "@agentr/shared";
 import type { WebSocket } from "ws";
 
+export interface TaskArtifactMeta {
+  name: string;
+  mimeType: string;
+  label: string;
+  url: string;
+}
+
 export interface TaskRecord {
   taskId: string;
   threadId: string;
@@ -10,6 +17,7 @@ export interface TaskRecord {
   conversation: ConversationRef;
   status: TaskStatus;
   logs: string[];
+  artifacts: TaskArtifactMeta[];
   createdAt: number;
   activityId?: string;
 }
@@ -70,16 +78,24 @@ export class SessionStore {
   }
 
   createTask(
-    partial: Omit<TaskRecord, "status" | "logs" | "createdAt">,
+    partial: Omit<TaskRecord, "status" | "logs" | "artifacts" | "createdAt">,
   ): TaskRecord {
     const record: TaskRecord = {
       ...partial,
       status: "running",
       logs: [],
+      artifacts: [],
       createdAt: Date.now(),
     };
     this.tasks.set(record.taskId, record);
     return record;
+  }
+
+  addArtifact(taskId: string, artifact: TaskArtifactMeta): TaskRecord | undefined {
+    const task = this.tasks.get(taskId);
+    if (!task) return undefined;
+    task.artifacts.push(artifact);
+    return task;
   }
 
   appendLog(taskId: string, chunk: string): TaskRecord | undefined {

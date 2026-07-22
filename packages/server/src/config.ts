@@ -8,6 +8,8 @@ export interface ServerConfig {
   httpPort: number;
   wsPort: number;
   mockMode: boolean;
+  /** Public HTTPS origin for artifact URLs, e.g. https://agent.example.com */
+  publicBaseUrl: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -18,6 +20,12 @@ export function loadConfig(): ServerConfig {
     process.env.AGENTR_MOCK === "true" ||
     (!microsoftAppId && !microsoftAppPassword);
 
+  const domain = (process.env.RELAY_DOMAIN ?? "").trim().replace(/\/$/, "");
+  const publicBaseUrl = (
+    process.env.PUBLIC_BASE_URL ??
+    (domain ? `https://${domain}` : `http://127.0.0.1:${process.env.HTTP_PORT ?? 3000}`)
+  ).replace(/\/$/, "");
+
   return {
     microsoftAppId,
     microsoftAppPassword,
@@ -26,5 +34,6 @@ export function loadConfig(): ServerConfig {
     httpPort: Number(process.env.HTTP_PORT ?? 3000),
     wsPort: Number(process.env.WS_PORT ?? 8080),
     mockMode,
+    publicBaseUrl,
   };
 }

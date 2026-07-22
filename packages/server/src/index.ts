@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import express from "express";
 import type { Request, Response } from "express";
+import { ArtifactStore } from "./artifacts.js";
 import { AgentRelayBot } from "./bot.js";
 import { loadConfig } from "./config.js";
 import { SessionStore } from "./store.js";
@@ -23,8 +24,10 @@ async function main(): Promise<void> {
   }
 
   const store = new SessionStore();
+  const artifacts = new ArtifactStore(config.publicBaseUrl);
+  artifacts.cleanup();
   const hub = new WorkerHub(config, store);
-  const bot = new AgentRelayBot(config, store, hub);
+  const bot = new AgentRelayBot(config, store, hub, artifacts);
 
   hub.setMessageHandler((msg, socket) => {
     switch (msg.type) {
@@ -39,6 +42,9 @@ async function main(): Promise<void> {
         break;
       case "task.log":
         void bot.onTaskLog(msg.taskId, msg.chunk);
+        break;
+      case "task.artifact":
+        void bot.onTaskArtifact(msg);
         break;
       case "task.approval_request":
         void bot.onApprovalRequest(
@@ -56,6 +62,7 @@ async function main(): Promise<void> {
 
   hub.start();
   console.log(`[server] WSS listening on :${config.wsPort}/ws`);
+  console.log(`[server] Public base URL for artifacts: ${config.publicBaseUrl}`);
 
   const app = express();
   app.use(express.json({ limit: "2mb" }));
@@ -72,7 +79,19 @@ async function main(): Promise<void> {
       pairedUsers: store.pairedUserIds.size,
       workerTokenConfigured: Boolean(config.workerToken),
       workerTokenLength: config.workerToken.length,
+      publicBaseUrl: config.publicBaseUrl,
     });
+  });
+
+  app.get("/artifacts/:taskId/:name", (req: Request, res: Response) => {
+    const file = artifacts.read(req.params.taskId, req.params.name);
+    if (!file) {
+      res.status(404).send("Not found");
+      return;
+    }
+    res.setHeader("Content-Type", file.mimeType);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.send(file.buffer);
   });
 
   app.post("/api/messages", async (req: Request, res: Response) => {

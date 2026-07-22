@@ -131,8 +131,12 @@ export class TaskRunner extends EventEmitter {
     }
 
     const model = (opts.agentModel || "auto").trim() || "auto";
-    // Prefer Markdown answers so Teams Adaptive Cards can render formatting.
-    const prompt = `${opts.prompt.trim()}\n\nReply in Markdown.`;
+    // Prefer Markdown; ask agent to leave UI visible for desktop screenshots.
+    const prompt = `${opts.prompt.trim()}
+
+Reply in Markdown.
+
+When you are done, open any UI you built (browser preview, app window, file viewer, etc.) so it is visible on screen — desktop screenshots of all monitors are captured automatically after this task.`;
     const args = [
       "--print",
       "--output-format",

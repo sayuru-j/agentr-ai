@@ -28,7 +28,7 @@ export function renderCaddyfile(opts: {
 ${opts.domain} {
 	encode gzip
 
-	@bot path /api/* /health
+	@bot path /api/* /health /artifacts/*
 	handle @bot {
 		reverse_proxy 127.0.0.1:3000
 	}

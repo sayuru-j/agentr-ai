@@ -76,6 +76,19 @@ export const TaskStatusMessageSchema = z.object({
 });
 export type TaskStatusMessage = z.infer<typeof TaskStatusMessageSchema>;
 
+/** Worker → Server: binary-ish artifact (screenshot) as base64 */
+export const TaskArtifactSchema = z.object({
+  type: z.literal("task.artifact"),
+  taskId: z.string(),
+  name: z.string(),
+  mimeType: z.string(),
+  /** raw base64 (no data: prefix) */
+  dataBase64: z.string(),
+  kind: z.literal("screenshot"),
+  label: z.string().optional(),
+});
+export type TaskArtifact = z.infer<typeof TaskArtifactSchema>;
+
 /** Server → Worker: cancel a running task */
 export const TaskCancelSchema = z.object({
   type: z.literal("task.cancel"),
@@ -104,6 +117,7 @@ export const WorkerToServerSchema = z.discriminatedUnion("type", [
   TaskLogSchema,
   TaskApprovalRequestSchema,
   TaskStatusMessageSchema,
+  TaskArtifactSchema,
 ]);
 export type WorkerToServer = z.infer<typeof WorkerToServerSchema>;
 

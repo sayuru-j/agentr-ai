@@ -35,7 +35,11 @@ export class WorkerHub {
       res.end("AgentRelay WSS hub\n");
     });
 
-    this.wss = new WebSocketServer({ server: this.httpServer, path: "/ws" });
+    this.wss = new WebSocketServer({
+      server: this.httpServer,
+      path: "/ws",
+      maxPayload: 25 * 1024 * 1024,
+    });
 
     this.wss.on("connection", (socket, req) => {
       const token = extractWorkerToken(req);
@@ -67,7 +71,8 @@ export class WorkerHub {
           msg.type === "worker.hello" ||
           msg.type === "task.log" ||
           msg.type === "task.approval_request" ||
-          msg.type === "task.status"
+          msg.type === "task.status" ||
+          msg.type === "task.artifact"
         ) {
           this.onMessage?.(msg, socket);
         }

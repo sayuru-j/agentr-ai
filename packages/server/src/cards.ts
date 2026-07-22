@@ -13,7 +13,6 @@ function toTeamsMarkdown(raw: string): string {
     text = "…\n" + text.slice(-3500);
   }
 
-  // Adaptive Cards treat single \n weakly; keep paragraphs readable
   return text;
 }
 
@@ -24,6 +23,7 @@ export function buildTaskCard(opts: {
   projectAlias?: string;
   logs: string[];
   hostname?: string;
+  screenshots?: Array<{ url: string; label: string }>;
 }) {
   const logText =
     opts.logs.length === 0
@@ -37,43 +37,109 @@ export function buildTaskCard(opts: {
     cancelled: "🛑",
   };
 
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: `${statusEmoji[opts.status]} AgentRelay Task`,
+      weight: "Bolder",
+      size: "Medium",
+    },
+    {
+      type: "FactSet",
+      facts: [
+        { title: "Status", value: opts.status },
+        { title: "Task", value: opts.taskId.slice(0, 8) },
+        ...(opts.projectAlias
+          ? [{ title: "Project", value: opts.projectAlias }]
+          : []),
+        ...(opts.hostname
+          ? [{ title: "Worker", value: opts.hostname }]
+          : []),
+      ],
+    },
+    {
+      type: "TextBlock",
+      text: opts.prompt,
+      wrap: true,
+      weight: "Bolder",
+    },
+    {
+      type: "TextBlock",
+      text: logText,
+      wrap: true,
+      size: "Small",
+    },
+  ];
+
+  if (opts.screenshots && opts.screenshots.length > 0) {
+    body.push({
+      type: "TextBlock",
+      text: "**Desktop screenshots**",
+      weight: "Bolder",
+      spacing: "Medium",
+    });
+    for (const shot of opts.screenshots) {
+      body.push({
+        type: "TextBlock",
+        text: shot.label,
+        size: "Small",
+        isSubtle: true,
+        spacing: "Small",
+      });
+      body.push({
+        type: "Image",
+        url: shot.url,
+        altText: shot.label,
+        size: "Stretch",
+      });
+    }
+  }
+
   return {
     type: "AdaptiveCard",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.4",
-    body: [
-      {
-        type: "TextBlock",
-        text: `${statusEmoji[opts.status]} AgentRelay Task`,
-        weight: "Bolder",
-        size: "Medium",
-      },
-      {
-        type: "FactSet",
-        facts: [
-          { title: "Status", value: opts.status },
-          { title: "Task", value: opts.taskId.slice(0, 8) },
-          ...(opts.projectAlias
-            ? [{ title: "Project", value: opts.projectAlias }]
-            : []),
-          ...(opts.hostname
-            ? [{ title: "Worker", value: opts.hostname }]
-            : []),
-        ],
-      },
-      {
-        type: "TextBlock",
-        text: opts.prompt,
-        wrap: true,
-        weight: "Bolder",
-      },
-      {
-        type: "TextBlock",
-        text: logText,
-        wrap: true,
-        size: "Small",
-      },
-    ],
+    body,
+  };
+}
+
+export function buildScreenshotCard(opts: {
+  taskId: string;
+  screenshots: Array<{ url: string; label: string }>;
+}) {
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: "🖥 Desktop screenshots",
+      weight: "Bolder",
+      size: "Medium",
+    },
+    {
+      type: "TextBlock",
+      text: `Task ${opts.taskId.slice(0, 8)} — all monitors`,
+      isSubtle: true,
+      spacing: "None",
+    },
+  ];
+  for (const shot of opts.screenshots) {
+    body.push({
+      type: "TextBlock",
+      text: shot.label,
+      weight: "Bolder",
+      spacing: "Medium",
+    });
+    body.push({
+      type: "Image",
+      url: shot.url,
+      altText: shot.label,
+      size: "Stretch",
+    });
+  }
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body,
   };
 }
 
