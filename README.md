@@ -1,12 +1,57 @@
-# AgentR (AgentRelay)
+# AgentR
 
-Self-hosted bridge from **Microsoft Teams** to a **local Cursor CLI agent** on your workstation.
+Self-hosted bridge from **Microsoft Teams** to a **local Cursor agent** on your PC.
 
-Speak or type a prompt in Teams → a small cloud VM relays it over WebSockets → your PC runs `agent chat` against local repos → live logs and shell **Approve / Reject** cards stream back to the same Teams thread.
+Type in Teams → a small cloud VM relays over WebSockets → your workstation runs Cursor CLI against local repos → live task cards (and optional desktop screenshots) come back to the same chat.
 
-## Documentation
+<p align="center">
+  <img src="./docs/media/agent-r-bot-teams-chat.png" alt="AgentR in Microsoft Teams — pair and status" width="720" />
+</p>
 
-All guides live in **[`docs/`](./docs/README.md)**:
+## How it works
+
+1. Run the **desktop tray** on your PC (Home / Projects / Settings).
+2. Sideload the **AgentR** bot in Teams and `/pair` with the code from the tray.
+3. Map folders to short aliases, then prompt with `!alias …`.
+
+| In Teams | What it does |
+|----------|----------------|
+| `/pair <code>` | Link this chat to your PC |
+| `!alias your prompt` | Run Cursor agent in that project |
+| `/ss` | Preview screenshots (all monitors) |
+| `/sshq` | High-quality screenshots |
+| `/help` | Full command list |
+
+AgentR only replies to messages starting with `!` or `/`.
+
+## Desktop app
+
+<p align="center">
+  <img src="./docs/media/home.png" alt="AgentR Home — pairing code and status" width="360" />
+  &nbsp;
+  <img src="./docs/media/projects.png" alt="AgentR Projects — aliases for Teams" width="360" />
+</p>
+
+<p align="center">
+  <img src="./docs/media/settings.png" alt="AgentR Settings — relay URL, token, model" width="360" />
+</p>
+
+- **Home** — online status, `/pair` code, reconnect  
+- **Projects** — alias → folder (used as `!alias` in Teams)  
+- **Settings** — relay URL, worker token, agent command, model (`auto` by default)
+
+## Quick start
+
+```bash
+npm install
+npm run build
+# or on Windows: .\scripts\build.ps1
+
+npm run cli:setup      # on the VM
+npm run dev:tray       # on the PC
+```
+
+Full guides: **[`docs/`](./docs/README.md)**
 
 | Guide | |
 |-------|--|
@@ -18,16 +63,6 @@ All guides live in **[`docs/`](./docs/README.md)**:
 | [Troubleshooting](./docs/troubleshooting.md) | TLS, App ID, offline worker |
 | [Protocol](./docs/protocol.md) | WSS messages |
 | [Local development](./docs/local-dev.md) | Mock mode |
-
-## Quick commands
-
-```bash
-npm install
-npm run build
-npm run cli:setup      # on the VM
-npm run dev:tray       # on the PC
-npm run dev:server     # local mock relay
-```
 
 ## License
 
