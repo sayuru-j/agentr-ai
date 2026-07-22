@@ -12,12 +12,17 @@
 
 .EXAMPLE
   .\scripts\build.ps1 -SkipInstall -Typecheck
+
+.EXAMPLE
+  .\scripts\build.ps1 -Exe
+  Builds packages then packs a Windows AgentR.exe (portable + NSIS installer).
 #>
 [CmdletBinding()]
 param(
   [switch]$SkipInstall,
   [switch]$Typecheck,
-  [switch]$Clean
+  [switch]$Clean,
+  [switch]$Exe
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,11 +88,29 @@ if ($Typecheck) {
   Assert-LastExit "npm run typecheck"
 }
 
+if ($Exe) {
+  Write-Step "Pack Windows .exe (electron-builder)"
+  $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
+  npm run pack:tray
+  Assert-LastExit "pack:tray"
+  $releaseDir = Join-Path $Root "packages\tray\release"
+  Write-Host ""
+  Write-Host "Windows artifacts:" -ForegroundColor Green
+  if (Test-Path $releaseDir) {
+    Get-ChildItem -Path $releaseDir -File | ForEach-Object {
+      Write-Host ("  " + $_.FullName)
+    }
+  } else {
+    Write-Host "  (expected under packages\tray\release)"
+  }
+}
+
 Write-Host ""
 Write-Host "Build OK." -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  Desktop tray:  npm run dev:tray"
+Write-Host "  Windows .exe:  .\scripts\build.ps1 -Exe   (or npm run pack:tray)"
 Write-Host "  Local server:  npm run dev:server"
 Write-Host "  VM deploy:     git pull && npm install && npm run build && sudo systemctl restart agent-relay-server"
 Write-Host ""

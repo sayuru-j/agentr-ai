@@ -19,6 +19,7 @@
     "dev:server": "npm run dev -w @agentr/server",
     "dev:worker": "npm run start -w @agentr/worker",
     "dev:tray": "npm run start -w @agentr/tray",
+    "pack:tray": "npm run pack:win -w @agentr/tray",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {

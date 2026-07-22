@@ -1,6 +1,6 @@
 # Desktop tray (Windows)
 
-## Start
+## Start (dev)
 
 ```powershell
 cd path\to\agentr-ai
@@ -10,6 +10,23 @@ npm run dev:tray
 ```
 
 The **AgentR** settings window opens automatically when the worker token is missing.
+
+## Windows `.exe`
+
+Pack a portable app and NSIS installer (unsigned hobby build):
+
+```powershell
+.\scripts\build.ps1 -Exe
+# or:
+npm run pack:tray
+```
+
+Artifacts land in `packages/tray/release/`:
+
+- `AgentR-0.1.0-portable.exe` — run anywhere, no install
+- `AgentR-0.1.0-win-x64.exe` — one-click NSIS installer
+
+Config still lives in `%USERPROFILE%\.agent-relay\config.json`.
 
 ## Configure
 

@@ -29,8 +29,13 @@ const PRELOAD_PATH = join(__dirname, "..", "preload.cjs");
 const UI_PATH = join(__dirname, "..", "ui", "index.html");
 const CONSOLE_UI_PATH = join(__dirname, "..", "ui", "console.html");
 const LOGO_CANDIDATES = [
-  join(__dirname, "..", "..", "assets", "logo.png"),
   join(__dirname, "..", "ui", "logo.png"),
+  join(__dirname, "ui", "logo.png"),
+  // electron-builder extraResources
+  ...(typeof process.resourcesPath === "string"
+    ? [join(process.resourcesPath, "logo.png")]
+    : []),
+  join(__dirname, "..", "..", "assets", "logo.png"),
 ];
 
 let tray: Tray | null = null;

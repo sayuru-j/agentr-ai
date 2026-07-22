@@ -46,9 +46,10 @@ AgentR only replies to messages starting with `!` or `/`.
 npm install
 npm run build
 # or on Windows: .\scripts\build.ps1
+# Windows .exe:  .\scripts\build.ps1 -Exe   → packages/tray/release/
 
 npm run cli:setup      # on the VM
-npm run dev:tray       # on the PC
+npm run dev:tray       # on the PC (dev)
 ```
 
 Full guides: **[`docs/`](./docs/README.md)**

@@ -1,0 +1,40 @@
+appId: com.agentr.tray
+productName: AgentR
+copyright: Copyright © AgentR
+directories:
+  output: release
+files:
+  - dist/**/*
+  - ui/**/*
+  - preload.cjs
+  - package.json
+  - node_modules/@agentr/**/*
+asar: true
+asarUnpack:
+  - "**/node_modules/screenshot-desktop/**"
+extraResources:
+  - from: ../assets/logo.png
+    to: logo.png
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+  icon: ../assets/logo.png
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  signAndEditExecutable: false
+  verifyUpdateCodeSignature: false
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AgentR
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+npmRebuild: false
+electronVersion: 33.4.11

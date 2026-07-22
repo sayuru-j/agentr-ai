@@ -9,6 +9,8 @@ build/
 Thumbs.db
 *.tsbuildinfo
 packages/tray/out/
+packages/tray/release/
+packages/tray/node_modules/@agentr/
 packages/cli/agentr-teams.zip
 .agent-relay/
 agent-relay-out/
