@@ -121,9 +121,10 @@ async function main(): Promise<void> {
         return;
       }
 
-      const { parseProjectAlias } = await import("@agentr/shared");
+      const { parseProjectAlias, parseScreenshotFlag } = await import("@agentr/shared");
       const { randomUUID } = await import("node:crypto");
-      const { alias, prompt } = parseProjectAlias(text);
+      const { captureScreenshots, text: withoutSs } = parseScreenshotFlag(text);
+      const { alias, prompt } = parseProjectAlias(withoutSs);
       const taskId = randomUUID();
       const conversation = {
         serviceUrl: "http://localhost",
@@ -132,7 +133,7 @@ async function main(): Promise<void> {
       store.createTask({
         taskId,
         threadId: conversation.conversationId,
-        prompt,
+        prompt: captureScreenshots ? `${prompt}  (/ss)` : prompt,
         projectAlias: alias,
         conversation,
       });
@@ -142,9 +143,10 @@ async function main(): Promise<void> {
         prompt,
         threadId: conversation.conversationId,
         projectAlias: alias,
+        captureScreenshots,
         conversation,
       });
-      res.json({ reply: "task started", taskId });
+      res.json({ reply: "task started", taskId, captureScreenshots });
       return;
     }
 

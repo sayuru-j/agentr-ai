@@ -227,7 +227,12 @@ export class AgentRelayWorker {
         this.emit("log", `Server ack: ${msg.message}`);
         break;
       case "task.create":
-        await this.runTask(msg.taskId, msg.prompt, msg.projectAlias);
+        await this.runTask(
+          msg.taskId,
+          msg.prompt,
+          msg.projectAlias,
+          Boolean(msg.captureScreenshots),
+        );
         break;
       case "task.approval_response": {
         const pending = this.pendingApprovals.get(msg.approvalId);
@@ -267,6 +272,7 @@ export class AgentRelayWorker {
     taskId: string,
     prompt: string,
     projectAlias?: string,
+    captureScreenshots = false,
   ): Promise<void> {
     const cwd = this.resolveCwd(projectAlias);
     if (!cwd) {
@@ -293,6 +299,7 @@ export class AgentRelayWorker {
       agentCommand: this.config.agentCommand,
       agentModel: this.config.agentModel,
       dryRun: this.config.dryRun,
+      captureScreenshots,
       onLog: (stream, chunk) => {
         this.emit("taskLog", { taskId, stream, chunk });
         this.send({
@@ -329,8 +336,7 @@ export class AgentRelayWorker {
     this.setStatus(this.ws ? "online" : "offline");
     this.emit("taskEnd", { taskId, exitCode: exitCode ?? 1 });
 
-    // Let UI settle, then capture every monitor for Teams.
-    if (!this.config.dryRun) {
+    if (captureScreenshots && !this.config.dryRun) {
       await this.sendDesktopScreenshots(taskId);
     }
 

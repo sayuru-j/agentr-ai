@@ -60,14 +60,33 @@ export function matchRiskCommand(
   return null;
 }
 
-/** Parse optional `[alias]` prefix from a Teams prompt. */
+/** Detect `/ss` flag for desktop screenshots; strip it from the message text. */
+export function parseScreenshotFlag(text: string): {
+  captureScreenshots: boolean;
+  text: string;
+} {
+  if (!/(?:^|\s)\/ss(?:\s|$)/i.test(text)) {
+    return { captureScreenshots: false, text };
+  }
+  const cleaned = text
+    .replace(/(?:^|\s)\/ss(?=\s|$)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { captureScreenshots: true, text: cleaned };
+}
+
+/** Parse optional `@alias` (or legacy `[alias]`) prefix from a Teams prompt. */
 export function parseProjectAlias(text: string): {
   alias?: string;
   prompt: string;
 } {
-  const m = text.match(/^\s*\[([^\]]+)\]\s*([\s\S]*)$/);
-  if (!m) return { prompt: text.trim() };
-  return { alias: m[1]!.trim(), prompt: m[2]!.trim() };
+  const at = text.match(/^\s*@([A-Za-z0-9_-]+)\s+([\s\S]*)$/);
+  if (at) return { alias: at[1]!.trim(), prompt: at[2]!.trim() };
+
+  const bracket = text.match(/^\s*\[([^\]]+)\]\s*([\s\S]*)$/);
+  if (bracket) return { alias: bracket[1]!.trim(), prompt: bracket[2]!.trim() };
+
+  return { prompt: text.trim() };
 }
 
 export const PROTOCOL_VERSION = "0.1.0";

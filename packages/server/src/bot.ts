@@ -1,5 +1,6 @@
 import {
   parseProjectAlias,
+  parseScreenshotFlag,
   type TaskApprovalResponse,
 } from "@agentr/shared";
 import {
@@ -115,7 +116,7 @@ export class AgentRelayBot {
       }
       if (this.store.pair(userId, code)) {
         await context.sendActivity(
-          "Paired successfully. You can now send prompts. Prefix with `[alias]` to pick a project.",
+          "Paired successfully. You can now send prompts. Prefix with `@alias` to pick a project.",
         );
       } else {
         await context.sendActivity(
@@ -146,7 +147,9 @@ export class AgentRelayBot {
           "`/pair <code>` — link your Teams user to the worker",
           "`/projects` — list worker project aliases",
           "`/status` — worker connection status",
-          "`[alias] your prompt` — run a task on a project",
+          "`@alias your prompt` — run a task on a project",
+          "`/ss` — include desktop screenshots of all monitors after the task",
+          "`/ss @alias your prompt` — run + screenshot",
         ].join("\n"),
       );
       return;
@@ -165,9 +168,14 @@ export class AgentRelayBot {
       return;
     }
 
-    const { alias, prompt } = parseProjectAlias(text);
+    const { captureScreenshots, text: withoutSs } = parseScreenshotFlag(text);
+    const { alias, prompt } = parseProjectAlias(withoutSs);
     if (!prompt) {
-      await context.sendActivity("Empty prompt.");
+      await context.sendActivity(
+        captureScreenshots
+          ? "Add a prompt after `/ss`, e.g. `/ss @sample open the app`."
+          : "Empty prompt.",
+      );
       return;
     }
 
@@ -179,17 +187,19 @@ export class AgentRelayBot {
       tenantId: context.activity.conversation.tenantId,
     };
 
+    const displayPrompt = captureScreenshots ? `${prompt}  (/ss)` : prompt;
+
     const record = this.store.createTask({
       taskId,
       threadId: context.activity.conversation.id,
-      prompt,
+      prompt: displayPrompt,
       projectAlias: alias,
       conversation,
     });
 
     const card = buildTaskCard({
       taskId,
-      prompt,
+      prompt: displayPrompt,
       status: "running",
       projectAlias: alias,
       logs: [],
@@ -208,6 +218,7 @@ export class AgentRelayBot {
       prompt,
       threadId: record.threadId,
       projectAlias: alias,
+      captureScreenshots,
       conversation,
     });
 

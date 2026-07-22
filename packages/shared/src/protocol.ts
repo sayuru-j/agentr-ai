@@ -33,6 +33,8 @@ export const TaskCreateSchema = z.object({
   prompt: z.string(),
   threadId: z.string(),
   projectAlias: z.string().optional(),
+  /** When true, worker captures all monitors after the task. */
+  captureScreenshots: z.boolean().optional(),
   conversation: ConversationRefSchema,
 });
 export type TaskCreate = z.infer<typeof TaskCreateSchema>;
