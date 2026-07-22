@@ -1,0 +1,96 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #0c0d0f;
+  color: #d7dbdf;
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  overflow: hidden;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  background: #16181c;
+  border-bottom: 1px solid #2a2e35;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.bar-drag {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f2f4f6;
+}
+
+.meta {
+  font-size: 11px;
+  color: #8b939c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-controls {
+  display: flex;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.bar-controls button {
+  width: 36px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: #b6bec8;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.bar-controls button:hover {
+  background: #2a2e35;
+}
+
+.bar-controls button.close:hover {
+  background: #b42318;
+  color: #fff;
+}
+
+.out {
+  margin: 0;
+  padding: 12px 14px 20px;
+  height: calc(100% - 36px);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.out .stderr {
+  color: #f5a4a0;
+}
+
+.out .banner {
+  color: #8ec8ff;
+}

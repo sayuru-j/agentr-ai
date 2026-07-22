@@ -30,15 +30,96 @@ function quoteWinCmdArg(arg: string): string {
   return `"${arg.replace(/"/g, '""')}"`;
 }
 
+/** Extract human-readable text from Cursor CLI `--output-format stream-json` lines. */
+class StreamJsonDecoder {
+  private buffer = "";
+  private seenPartial = false;
+
+  push(chunk: string): string[] {
+    this.buffer += chunk;
+    const lines = this.buffer.split(/\r?\n/);
+    this.buffer = lines.pop() ?? "";
+    const out: string[] = [];
+    for (const line of lines) {
+      const text = this.decodeLine(line);
+      if (text) out.push(text);
+    }
+    return out;
+  }
+
+  flush(): string[] {
+    if (!this.buffer.trim()) return [];
+    const text = this.decodeLine(this.buffer);
+    this.buffer = "";
+    return text ? [text] : [];
+  }
+
+  private decodeLine(line: string): string | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+    if (trimmed[0] !== "{") {
+      return line.endsWith("\n") ? line : `${line}\n`;
+    }
+    try {
+      const ev = JSON.parse(trimmed) as Record<string, unknown>;
+      return formatStreamEvent(ev, this);
+    } catch {
+      return `${line}\n`;
+    }
+  }
+
+  markPartial(): void {
+    this.seenPartial = true;
+  }
+
+  get hasSeenPartial(): boolean {
+    return this.seenPartial;
+  }
+}
+
+function formatStreamEvent(
+  ev: Record<string, unknown>,
+  decoder: StreamJsonDecoder,
+): string | null {
+  const type = ev.type;
+  if (type === "system" && ev.subtype === "init") {
+    const model = String(ev.model ?? "?");
+    return `[agent] ${model}\n`;
+  }
+  if (type === "assistant") {
+    const message = ev.message as
+      | { content?: Array<{ type?: string; text?: string }> }
+      | undefined;
+    const text = (message?.content ?? [])
+      .filter((c) => c.type === "text" && c.text)
+      .map((c) => c.text!)
+      .join("");
+    if (!text) return null;
+    // With --stream-partial-output: only use deltas (timestamp_ms, no model_call_id).
+    if (ev.model_call_id) return null;
+    if (ev.timestamp_ms != null) {
+      decoder.markPartial();
+      return text;
+    }
+    // Full segment (no partial mode) — keep. Final duplicate flush after partials — skip.
+    if (decoder.hasSeenPartial) return null;
+    return text;
+  }
+  if (type === "tool_call" && ev.subtype === "started") {
+    const toolCall = (ev.tool_call ?? {}) as Record<string, unknown>;
+    const name = Object.keys(toolCall)[0]?.replace(/ToolCall$/, "") ?? "tool";
+    return `\n⚙ ${name}…\n`;
+  }
+  if (type === "result" && ev.is_error) {
+    return `\n[error] ${String(ev.result ?? "failed")}\n`;
+  }
+  return null;
+}
+
 /**
  * Spawns headless `agent` against a project folder and streams output.
- * Defaults to Cursor Auto (`--model auto`). Passes `--trust` because projects
- * are already chosen by the user in the tray (no interactive trust prompt).
- * Uses `--print` + `--force` so the CLI does not hang waiting for a TTY.
- *
- * Scans lines for risk patterns; when matched, requests Teams approval
- * (MVP: kill/continue based on decision). Cursor CLI may not expose a true
- * "pause before shell" hook — risk scanning is best-effort on streamed output.
+ * Uses stream-json + partial deltas so Teams/console update live.
+ * `windowsHide: false` so Electron does not swallow the console on Windows.
  */
 export class TaskRunner extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -50,15 +131,16 @@ export class TaskRunner extends EventEmitter {
     }
 
     const model = (opts.agentModel || "auto").trim() || "auto";
-    // Prefer `--workspace=<path>` as one argv so spaced paths stay intact.
     const args = [
       "--print",
+      "--output-format",
+      "stream-json",
+      "--stream-partial-output",
       "--trust",
       "--force",
       "--model",
       model,
       `--workspace=${opts.cwd}`,
-      "chat",
       opts.prompt,
     ];
 
@@ -67,33 +149,44 @@ export class TaskRunner extends EventEmitter {
       cwd: opts.cwd,
       env: process.env,
       shell: useShell,
+      // Electron defaults to hiding consoles; keep agent visible on the PC.
+      windowsHide: false,
     });
 
-    const scan = async (stream: "stdout" | "stderr", chunk: string) => {
-      opts.onLog(stream, chunk);
-      const lines = chunk.split(/\r?\n/);
-      for (const line of lines) {
-        const risk = matchRiskCommand(line);
-        if (!risk) continue;
-        const approved = await opts.requestApproval(risk.command, risk.reason);
-        if (!approved) {
-          opts.onLog("stderr", `\n[agent-relay] Rejected: ${risk.command}\n`);
-          this.cancel();
-          return;
+    const decoder = new StreamJsonDecoder();
+
+    const handleChunk = async (stream: "stdout" | "stderr", chunk: string) => {
+      const pieces =
+        stream === "stdout" ? decoder.push(chunk) : chunk ? [chunk] : [];
+      for (const piece of pieces) {
+        opts.onLog(stream, piece);
+        const lines = piece.split(/\r?\n/);
+        for (const line of lines) {
+          const risk = matchRiskCommand(line);
+          if (!risk) continue;
+          const approved = await opts.requestApproval(risk.command, risk.reason);
+          if (!approved) {
+            opts.onLog("stderr", `\n[agent-relay] Rejected: ${risk.command}\n`);
+            this.cancel();
+            return;
+          }
+          opts.onLog("stdout", `\n[agent-relay] Approved: ${risk.command}\n`);
         }
-        opts.onLog("stdout", `\n[agent-relay] Approved: ${risk.command}\n`);
       }
     };
 
     this.child.stdout.on("data", (buf: Buffer) => {
-      void scan("stdout", buf.toString("utf8"));
+      void handleChunk("stdout", buf.toString("utf8"));
     });
     this.child.stderr.on("data", (buf: Buffer) => {
-      void scan("stderr", buf.toString("utf8"));
+      void handleChunk("stderr", buf.toString("utf8"));
     });
 
     return new Promise((resolve) => {
       this.child!.on("close", (code) => {
+        for (const piece of decoder.flush()) {
+          opts.onLog("stdout", piece);
+        }
         this.child = null;
         resolve(this.killed ? 130 : (code ?? 1));
       });
@@ -109,7 +202,6 @@ export class TaskRunner extends EventEmitter {
     opts.onLog("stdout", `[dry-run] Starting task in ${opts.cwd}\n`);
     opts.onLog("stdout", `[dry-run] Prompt: ${opts.prompt}\n`);
 
-    // Simulate a risky command in the stream for approval testing
     if (/\bnpm install\b/i.test(opts.prompt) || opts.prompt.includes("--approve-test")) {
       const approved = await opts.requestApproval(
         "npm install",
@@ -122,12 +214,12 @@ export class TaskRunner extends EventEmitter {
       opts.onLog("stdout", "[dry-run] Approval granted — continuing\n");
     }
 
-    await delay(300);
-    const model = (opts.agentModel || "auto").trim() || "auto";
-    opts.onLog(
-      "stdout",
-      `[dry-run] Would run: agent --print --trust --force --model ${model} --workspace=… chat …\n`,
-    );
+    // Simulate token streaming
+    const words = "[dry-run] Streaming sample output from AgentR…\n".split(" ");
+    for (const w of words) {
+      opts.onLog("stdout", w.endsWith("\n") ? w : `${w} `);
+      await delay(40);
+    }
     opts.onLog("stdout", "[dry-run] Done.\n");
     return 0;
   }

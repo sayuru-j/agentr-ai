@@ -283,7 +283,7 @@ export class AgentRelayBot {
       setTimeout(() => {
         this.logUpdateTimers.delete(task.taskId);
         void this.updateTaskCard(task);
-      }, 800),
+      }, 280),
     );
   }
 

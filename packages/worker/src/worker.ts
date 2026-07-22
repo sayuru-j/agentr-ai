@@ -19,6 +19,20 @@ export interface WorkerEvents {
   error: (err: Error) => void;
   /** Fired when the relay rejects the worker token (no auto-reconnect). */
   unauthorized: (message: string) => void;
+  /** Task started on this PC — open local console. */
+  taskStart: (info: {
+    taskId: string;
+    prompt: string;
+    cwd: string;
+  }) => void;
+  /** Live agent output chunk for local console + relay. */
+  taskLog: (info: {
+    taskId: string;
+    stream: "stdout" | "stderr";
+    chunk: string;
+  }) => void;
+  /** Task finished. */
+  taskEnd: (info: { taskId: string; exitCode: number }) => void;
 }
 
 type PendingApproval = {
@@ -266,6 +280,7 @@ export class AgentRelayWorker {
 
     this.setStatus("busy");
     this.send({ type: "task.status", taskId, status: "running" });
+    this.emit("taskStart", { taskId, prompt, cwd });
 
     const runner = new TaskRunner();
     this.runners.set(taskId, runner);
@@ -278,6 +293,7 @@ export class AgentRelayWorker {
       agentModel: this.config.agentModel,
       dryRun: this.config.dryRun,
       onLog: (stream, chunk) => {
+        this.emit("taskLog", { taskId, stream, chunk });
         this.send({
           type: "task.log",
           taskId,
@@ -310,6 +326,7 @@ export class AgentRelayWorker {
 
     this.runners.delete(taskId);
     this.setStatus(this.ws ? "online" : "offline");
+    this.emit("taskEnd", { taskId, exitCode: exitCode ?? 1 });
 
     this.send({
       type: "task.status",

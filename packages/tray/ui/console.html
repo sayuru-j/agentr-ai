@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentR Console</title>
+    <link rel="stylesheet" href="console.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="bar-drag">
+        <span class="title">AgentR Console</span>
+        <span id="meta" class="meta"></span>
+      </div>
+      <div class="bar-controls">
+        <button type="button" id="win-min" aria-label="Minimize">─</button>
+        <button type="button" id="win-close" aria-label="Close" class="close">✕</button>
+      </div>
+    </header>
+    <pre id="out" class="out" aria-live="polite"></pre>
+    <script src="console.js"></script>
+  </body>
+</html>

@@ -13,4 +13,19 @@ contextBridge.exposeInMainWorld("agentr", {
     ipcRenderer.on("status:changed", handler);
     return () => ipcRenderer.removeListener("status:changed", handler);
   },
+  onConsoleInit: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("console:init", handler);
+    return () => ipcRenderer.removeListener("console:init", handler);
+  },
+  onConsoleLog: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("console:log", handler);
+    return () => ipcRenderer.removeListener("console:log", handler);
+  },
+  onConsoleEnd: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("console:end", handler);
+    return () => ipcRenderer.removeListener("console:end", handler);
+  },
 });

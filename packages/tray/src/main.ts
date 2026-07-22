@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRELOAD_PATH = join(__dirname, "..", "preload.cjs");
 const UI_PATH = join(__dirname, "..", "ui", "index.html");
+const CONSOLE_UI_PATH = join(__dirname, "..", "ui", "console.html");
 const LOGO_CANDIDATES = [
   join(__dirname, "..", "..", "assets", "logo.png"),
   join(__dirname, "..", "ui", "logo.png"),
@@ -34,6 +35,7 @@ const LOGO_CANDIDATES = [
 
 let tray: Tray | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let consoleWindow: BrowserWindow | null = null;
 let worker: AgentRelayWorker | null = null;
 let pairingCode = "--------";
 let status: WorkerStatus = "offline";
@@ -156,6 +158,51 @@ function openSettings(): void {
   });
 }
 
+function openAgentConsole(info: {
+  taskId: string;
+  prompt: string;
+  cwd: string;
+}): void {
+  if (!consoleWindow || consoleWindow.isDestroyed()) {
+    consoleWindow = new BrowserWindow({
+      width: 720,
+      height: 480,
+      minWidth: 420,
+      minHeight: 280,
+      title: "AgentR Console",
+      icon: appIcon(),
+      backgroundColor: "#0c0d0f",
+      autoHideMenuBar: true,
+      frame: false,
+      titleBarStyle: "hidden",
+      show: false,
+      webPreferences: {
+        preload: PRELOAD_PATH,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+      },
+    });
+    void consoleWindow.loadFile(CONSOLE_UI_PATH);
+    consoleWindow.on("closed", () => {
+      consoleWindow = null;
+    });
+  }
+
+  const sendInit = () => {
+    consoleWindow?.webContents.send("console:init", info);
+  };
+
+  if (consoleWindow.webContents.isLoading()) {
+    consoleWindow.webContents.once("did-finish-load", sendInit);
+  } else {
+    sendInit();
+  }
+
+  consoleWindow.show();
+  consoleWindow.focus();
+}
+
 function startWorker(): void {
   ensureConfigDir();
   if (!existsSync(DEFAULT_CONFIG_PATH)) {
@@ -192,6 +239,19 @@ function startWorker(): void {
       }).show();
     }
     openSettings();
+  });
+  worker.on("taskStart", (info) => {
+    openAgentConsole(info);
+  });
+  worker.on("taskLog", (info) => {
+    if (consoleWindow && !consoleWindow.isDestroyed()) {
+      consoleWindow.webContents.send("console:log", info);
+    }
+  });
+  worker.on("taskEnd", (info) => {
+    if (consoleWindow && !consoleWindow.isDestroyed()) {
+      consoleWindow.webContents.send("console:end", info);
+    }
   });
 
   const needsSetup =
