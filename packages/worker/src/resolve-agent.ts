@@ -21,6 +21,19 @@ export interface ResolveAgentResult {
 const WIN_NAMES = ["agent.cmd", "agent.exe", "agent.bat", "agent"];
 const POSIX_NAMES = ["agent"];
 
+/** Strip surrounding quotes so config/"Find" paths with spaces still resolve. */
+function stripOuterQuotes(value: string): string {
+  const t = value.trim();
+  if (
+    t.length >= 2 &&
+    ((t.startsWith('"') && t.endsWith('"')) ||
+      (t.startsWith("'") && t.endsWith("'")))
+  ) {
+    return t.slice(1, -1).trim();
+  }
+  return t;
+}
+
 function looksLikeFilesystemPath(value: string): boolean {
   if (!value) return false;
   if (isAbsolute(value)) return true;
@@ -117,7 +130,7 @@ function findInCursorAgentDirs(): string | null {
 export function resolveAgentCommand(
   configured = "agent",
 ): ResolveAgentResult {
-  const trimmed = configured.trim() || "agent";
+  const trimmed = stripOuterQuotes(configured) || "agent";
 
   if (looksLikeFilesystemPath(trimmed)) {
     if (existsSync(trimmed)) {
@@ -169,7 +182,7 @@ export function resolveAgentCommand(
  * so Electron/portable builds do not depend on a thin GUI PATH.
  */
 export function preferResolvedAgentCommand(configured: string): string {
-  const trimmed = configured.trim() || "agent";
+  const trimmed = stripOuterQuotes(configured) || "agent";
   if (looksLikeFilesystemPath(trimmed) && existsSync(trimmed)) {
     return trimmed;
   }

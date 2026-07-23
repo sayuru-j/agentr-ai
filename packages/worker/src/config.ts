@@ -34,6 +34,18 @@ export interface WorkerConfig {
 export const DEFAULT_CONFIG_DIR = join(homedir(), ".agent-relay");
 export const DEFAULT_CONFIG_PATH = join(DEFAULT_CONFIG_DIR, "config.json");
 
+function stripOuterQuotes(value: string): string {
+  const t = value.trim();
+  if (
+    t.length >= 2 &&
+    ((t.startsWith('"') && t.endsWith('"')) ||
+      (t.startsWith("'") && t.endsWith("'")))
+  ) {
+    return t.slice(1, -1).trim();
+  }
+  return t;
+}
+
 export function defaultConfig(): WorkerConfig {
   return {
     relayUrl: "wss://agent.example.com/ws",
@@ -100,7 +112,7 @@ export function loadWorkerConfig(path = DEFAULT_CONFIG_PATH): WorkerConfig {
     ...raw,
     relayUrl: (raw.relayUrl ?? base.relayUrl).trim(),
     workerToken: (raw.workerToken ?? "").trim(),
-    agentCommand: (raw.agentCommand ?? "agent").trim() || "agent",
+    agentCommand: stripOuterQuotes(String(raw.agentCommand ?? "agent")) || "agent",
     agentModel: (raw.agentModel ?? "auto").trim() || "auto",
     dryRun: Boolean(raw.dryRun),
     openAtLogin: Boolean(raw.openAtLogin ?? base.openAtLogin),

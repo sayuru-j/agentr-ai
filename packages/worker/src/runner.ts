@@ -20,14 +20,17 @@ export interface TaskRunnerEvents {
 }
 
 /**
- * On Windows, `spawn(..., { shell: true })` joins args with spaces and does
- * not escape them — paths like `C:\Users\Sayuru at Fleximal\...` get truncated.
- * Quote for cmd.exe when needed.
+ * On Windows, `spawn(..., { shell: true })` builds a cmd.exe line and does not
+ * escape spaces — paths like `C:\Users\Sayuru at Fleximal\...\agent.cmd` get
+ * truncated unless double-quoted (portable + installed).
  */
 function quoteWinCmdArg(arg: string): string {
-  if (arg.length >= 2 && arg.startsWith('"') && arg.endsWith('"')) return arg;
-  if (!/[ \t"&<>|^%!]/.test(arg)) return arg;
-  return `"${arg.replace(/"/g, '""')}"`;
+  const trimmed = arg.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed;
+  }
+  if (!/[ \t"&<>|^%!]/.test(trimmed)) return trimmed;
+  return `"${trimmed.replace(/"/g, '""')}"`;
 }
 
 /** Extract human-readable text from Cursor CLI `--output-format stream-json` lines. */
@@ -146,7 +149,11 @@ export class TaskRunner extends EventEmitter {
     ];
 
     const useShell = process.platform === "win32";
-    this.child = spawn(opts.agentCommand, useShell ? args.map(quoteWinCmdArg) : args, {
+    // Quote the executable too — Node only joins args; spaced agent paths need "".
+    const command = useShell
+      ? quoteWinCmdArg(opts.agentCommand)
+      : opts.agentCommand.trim();
+    this.child = spawn(command, useShell ? args.map(quoteWinCmdArg) : args, {
       cwd: opts.cwd,
       env: process.env,
       shell: useShell,
