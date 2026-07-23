@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +15,22 @@ export interface ServerConfig {
   publicBaseUrl: string;
   /** Directory for persisted session data (pairing). */
   dataDir: string;
+  /** Path to Teams sideload zip (served at /api/agentr-teams.zip). */
+  teamsZipPath: string | null;
+}
+
+function resolveTeamsZipPath(): string | null {
+  const fromEnv = (process.env.AGENTR_TEAMS_ZIP ?? "").trim();
+  if (fromEnv) return fromEnv;
+  const candidates = [
+    "/etc/agent-relay/agentr-teams.zip",
+    join(process.cwd(), "agent-relay-out", "agentr-teams.zip"),
+    join(process.cwd(), "agentr-teams.zip"),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return candidates[0] ?? null;
 }
 
 export function loadConfig(): ServerConfig {
@@ -46,5 +63,6 @@ export function loadConfig(): ServerConfig {
     mockMode,
     publicBaseUrl,
     dataDir,
+    teamsZipPath: resolveTeamsZipPath(),
   };
 }

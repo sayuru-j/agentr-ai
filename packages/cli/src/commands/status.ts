@@ -276,6 +276,15 @@ async function printReport(ctx: StatusContext): Promise<{
 
   section("Artifacts");
   line("Teams zip", fileInfo(zip) + (existsSync(zip) ? pc.dim(`  ${zip}`) : ""));
+  if (existsSync(zip) && domain) {
+    line("Download", pc.bold(`https://${domain}/api/agentr-teams.zip`));
+  } else if (existsSync(zip)) {
+    line(
+      "Download",
+      pc.dim(`http://127.0.0.1:${httpPort}/api/agentr-teams.zip`) +
+        pc.dim(" (set RELAY_DOMAIN for public HTTPS link)"),
+    );
+  }
   line("Caddyfile", fileInfo(existsSync(caddyLive) ? caddyLive : caddySrc));
   if (existsSync(caddySrc) || existsSync(caddyLive)) {
     const path = existsSync(caddyLive) ? caddyLive : caddySrc;
@@ -362,7 +371,11 @@ async function printReport(ctx: StatusContext): Promise<{
   if (pairing && workerOnline) {
     tips.push(`In Teams: /pair ${pairing}`);
   } else if (existsSync(zip)) {
-    tips.push(`Sideload Teams app: ${zip}`);
+    tips.push(
+      domain
+        ? `Sideload Teams app: https://${domain}/api/agentr-teams.zip`
+        : `Sideload Teams app: ${zip}`,
+    );
   }
   if (domain) {
     tips.push(`Azure Bot endpoint: https://${domain}/api/messages`);

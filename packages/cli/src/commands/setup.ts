@@ -206,6 +206,7 @@ fi
 run mkdir -p /etc/agent-relay /etc/caddy
 safe_cp "\$SRC_DIR/config.env" /etc/agent-relay/config.env
 run chmod 600 /etc/agent-relay/config.env
+safe_cp "\$SRC_DIR/agentr-teams.zip" /etc/agent-relay/agentr-teams.zip
 safe_cp "\$SRC_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
 
 NODE_BIN="$(command -v node)"
@@ -261,7 +262,7 @@ echo "Health: curl -sS https://\$(grep RELAY_DOMAIN /etc/agent-relay/config.env 
 
   p.outro(
     pc.green(
-      `Done. Upload ${zipPath} to Teams, then configure the worker with this token.`,
+      `Done. Download https://${String(domain)}/api/agentr-teams.zip (after services are up), upload to Teams, then configure the worker with this token.`,
     ),
   );
   console.log(pc.dim(`WORKER_TOKEN=${workerToken}`));

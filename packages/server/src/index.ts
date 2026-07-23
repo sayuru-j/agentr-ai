@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createReadStream, existsSync, statSync } from "node:fs";
 import express from "express";
 import type { Request, Response } from "express";
 import { ArtifactStore } from "./artifacts.js";
@@ -100,6 +101,28 @@ async function main(): Promise<void> {
   // Prefer /api/artifacts (already proxied by Caddy @bot path /api/*)
   app.get("/api/artifacts/:taskId/:name", serveArtifact);
   app.get("/artifacts/:taskId/:name", serveArtifact);
+
+  // Teams sideload package (public; App ID only — no secrets)
+  app.get("/api/agentr-teams.zip", (_req, res) => {
+    const zipPath = config.teamsZipPath;
+    if (!zipPath || !existsSync(zipPath)) {
+      res.status(404).json({
+        error: "agentr-teams.zip not found",
+        hint: "Run setup on the VM, or set AGENTR_TEAMS_ZIP to the zip path",
+        expected: zipPath ?? "/etc/agent-relay/agentr-teams.zip",
+      });
+      return;
+    }
+    const size = statSync(zipPath).size;
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="agentr-teams.zip"',
+    );
+    res.setHeader("Content-Length", String(size));
+    res.setHeader("Cache-Control", "no-cache");
+    createReadStream(zipPath).pipe(res);
+  });
 
   app.post("/api/artifacts", requireWorkerToken(config.workerToken), async (req, res) => {
     const taskId = String(req.body?.taskId ?? "");
@@ -225,6 +248,11 @@ async function main(): Promise<void> {
   app.listen(config.httpPort, () => {
     console.log(`[server] HTTP listening on :${config.httpPort}`);
     console.log(`[server] Pairing code: ${store.pairingCode}`);
+    if (config.teamsZipPath && existsSync(config.teamsZipPath)) {
+      console.log(
+        `[server] Teams zip: ${config.publicBaseUrl}/api/agentr-teams.zip`,
+      );
+    }
   });
 }
 
