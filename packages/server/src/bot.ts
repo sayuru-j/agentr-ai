@@ -584,70 +584,94 @@ export class AgentRelayBot {
     const sizeLabel = formatBytes(msg.sizeBytes);
     const pathLabel = msg.relativePath || pending.relativePath;
 
-    if (msg.delivery === "inline" && msg.text != null) {
-      const isMarkdown = /\.md$/i.test(pathLabel);
-      const body = msg.truncated
-        ? `${msg.text}\n\n_(truncated — file exceeds inline size limit)_`
-        : msg.text;
-      const header = `**\`!${pending.alias}\`** \`${pathLabel}\` (${sizeLabel})`;
-      const text = isMarkdown
-        ? `${header}\n\n${body}`
-        : `${header}\n\n\`\`\`\n${body}\n\`\`\``;
+    if (!msg.dataBase64) {
+      // Legacy inline-only replies: still show text if present
+      if (msg.text != null) {
+        const header = `**\`!${pending.alias}\`** \`${pathLabel}\` (${sizeLabel})`;
+        await this.replyInConversation(
+          pending.conversation,
+          pending.rootActivityId,
+          `${header}\n\n\`\`\`\n${msg.text}\n\`\`\``,
+        );
+        return;
+      }
       await this.replyInConversation(
         pending.conversation,
         pending.rootActivityId,
-        text,
+        `Fetched \`${pathLabel}\` but had nothing to display.`,
       );
       return;
     }
 
-    if (msg.delivery === "download" && msg.dataBase64) {
-      const stored = this.artifacts.save({
-        taskId: msg.requestId,
-        name: msg.name || pathLabel.split("/").pop() || "file.bin",
-        mimeType: msg.mimeType || "application/octet-stream",
-        dataBase64: msg.dataBase64,
-        label: pathLabel,
-      });
-      if (!this.adapter) {
-        console.log(`[mock] file.get ${pathLabel} → ${stored.url}`);
-        return;
-      }
-      try {
-        const ref = {
-          conversation: { id: pending.conversation.conversationId },
-          serviceUrl: pending.conversation.serviceUrl,
-        };
-        await this.adapter.continueConversationAsync(
-          this.config.microsoftAppId,
-          ref as never,
-          async (ctx) => {
-            const card = MessageFactory.attachment(
-              CardFactory.adaptiveCard(
-                buildFileGetCard({
-                  alias: pending.alias,
-                  relativePath: pathLabel,
-                  sizeLabel,
-                  url: stored.url,
-                  mimeType: stored.mimeType,
-                }),
-              ),
-            );
-            if (pending.rootActivityId) card.replyToId = pending.rootActivityId;
-            await ctx.sendActivity(card);
-          },
-        );
-      } catch (err) {
-        console.error("[bot] file.get card failed", err);
-      }
+    const stored = this.artifacts.save({
+      taskId: msg.requestId,
+      name: msg.name || pathLabel.split("/").pop() || "file.bin",
+      mimeType: msg.mimeType || "application/octet-stream",
+      dataBase64: msg.dataBase64,
+      label: pathLabel,
+    });
+
+    if (!this.adapter) {
+      console.log(`[mock] file.get ${pathLabel} → ${stored.url}`);
       return;
     }
 
-    await this.replyInConversation(
-      pending.conversation,
-      pending.rootActivityId,
-      `Fetched \`${pathLabel}\` but had nothing to display.`,
-    );
+    const fileName = stored.name;
+    const header = `**\`!${pending.alias}\`** \`${pathLabel}\` (${sizeLabel})`;
+    const linkLine = `[Download ${fileName}](${stored.url})`;
+
+    try {
+      const ref = {
+        conversation: { id: pending.conversation.conversationId },
+        serviceUrl: pending.conversation.serviceUrl,
+      };
+      await this.adapter.continueConversationAsync(
+        this.config.microsoftAppId,
+        ref as never,
+        async (ctx) => {
+          // Prefer octet-stream for the Teams chip so HTML/text show as a file,
+          // not an inline preview. The HTTPS URL still serves the real mime type.
+          const attachType = stored.mimeType.startsWith("image/")
+            ? stored.mimeType
+            : "application/octet-stream";
+          const fileMsg: Partial<Activity> = {
+            type: "message",
+            text: `${header}\n${linkLine}`,
+            attachments: [
+              {
+                contentType: attachType,
+                contentUrl: stored.url,
+                name: fileName,
+              },
+            ],
+          };
+          if (pending.rootActivityId) {
+            fileMsg.replyToId = pending.rootActivityId;
+          }
+          await ctx.sendActivity(fileMsg as Activity);
+
+          // 2) Card with OpenUrl + optional preview (some clients hide actions;
+          //    the attachment + markdown link above still work)
+          const card = MessageFactory.attachment(
+            CardFactory.adaptiveCard(
+              buildFileGetCard({
+                alias: pending.alias,
+                relativePath: pathLabel,
+                sizeLabel,
+                url: stored.url,
+                mimeType: stored.mimeType,
+                preview: msg.text,
+                truncated: msg.truncated,
+              }),
+            ),
+          );
+          if (pending.rootActivityId) card.replyToId = pending.rootActivityId;
+          await ctx.sendActivity(card);
+        },
+      );
+    } catch (err) {
+      console.error("[bot] file.get delivery failed", err);
+    }
   }
 
   private async replyInConversation(

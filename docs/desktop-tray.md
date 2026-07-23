@@ -34,6 +34,8 @@ Both builds are **unsigned** hobby packages (`signAndEditExecutable: false`):
 
 Config always lives in `%USERPROFILE%\.agent-relay\config.json` (same for portable and installed).
 
+**Dev tip:** After `npm run pack:tray`, `packages/tray/node_modules/@agentr` holds a snapshot for the installer. `npm run dev:tray` clears that folder so Electron uses the live workspace worker (otherwise `/get` and other new protocol messages silently time out).
+
 **Backup:** Settings → **Export config…** (or tray menu **Export config…**) copies that file to a path you choose. It includes the worker token — store the export privately.
 
 ## Configure

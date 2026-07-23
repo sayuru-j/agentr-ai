@@ -7,7 +7,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
-    "start": "npm run build && electron .",
+    "start": "npm run build && node scripts/use-workspace-deps.mjs && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepare-pack": "node scripts/prepare-pack.mjs",
     "pack:win": "npm run build && npm run prepare-pack && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --config electron-builder.yml",

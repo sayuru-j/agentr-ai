@@ -278,7 +278,17 @@ export class AgentRelayWorker {
         return;
       }
       const parsed = safeParseRelayMessage(data);
-      if (!parsed.success) return;
+      if (!parsed.success) {
+        const typ =
+          data && typeof data === "object" && "type" in data
+            ? String((data as { type: unknown }).type)
+            : "?";
+        this.emit(
+          "log",
+          `Ignored relay message type=${typ}: ${parsed.error.issues.map((i) => i.message).join("; ") || "parse failed"}`,
+        );
+        return;
+      }
       const msg = parsed.data as ServerToWorker;
       void this.handleServerMessage(msg);
     });
@@ -700,21 +710,6 @@ export class AgentRelayWorker {
       "log",
       `file.get ${projectAlias}:${result.relativePath} (${result.delivery}, ${result.sizeBytes} B)`,
     );
-    if (result.delivery === "inline") {
-      this.send({
-        type: "file.result",
-        requestId,
-        ok: true,
-        name: result.name,
-        relativePath: result.relativePath,
-        mimeType: result.mimeType,
-        sizeBytes: result.sizeBytes,
-        delivery: "inline",
-        text: result.text,
-        truncated: result.truncated,
-      });
-      return;
-    }
     this.send({
       type: "file.result",
       requestId,
@@ -723,7 +718,9 @@ export class AgentRelayWorker {
       relativePath: result.relativePath,
       mimeType: result.mimeType,
       sizeBytes: result.sizeBytes,
-      delivery: "download",
+      delivery: result.delivery,
+      text: result.delivery === "inline" ? result.text : undefined,
+      truncated: result.delivery === "inline" ? result.truncated : undefined,
       dataBase64: result.dataBase64,
     });
   }

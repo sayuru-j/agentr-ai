@@ -141,6 +141,8 @@ export type FileGetPayload =
       delivery: "inline";
       text: string;
       truncated: boolean;
+      /** Full file bytes so Teams can always offer Download. */
+      dataBase64: string;
     }
   | {
       ok: true;
@@ -381,6 +383,7 @@ function readResolvedFile(
       delivery: "inline",
       text,
       truncated,
+      dataBase64: buffer.toString("base64"),
     };
   }
 

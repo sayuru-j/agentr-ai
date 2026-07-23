@@ -1,6 +1,9 @@
 /**
  * Materialize workspace packages under tray/node_modules/@agentr so
  * electron-builder can package them (npm workspace symlinks alone are unreliable).
+ *
+ * Dev note: `npm start` / `dev:tray` clears this folder via use-workspace-deps.mjs
+ * so Electron loads live packages/* instead of a stale pack snapshot.
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

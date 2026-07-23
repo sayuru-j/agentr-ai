@@ -209,32 +209,59 @@ export function buildFileGetCard(opts: {
   sizeLabel: string;
   url: string;
   mimeType: string;
+  /** Optional text preview (truncated OK). */
+  preview?: string;
+  truncated?: boolean;
 }) {
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: "Project file",
+      weight: "Bolder",
+      size: "Medium",
+    },
+    {
+      type: "FactSet",
+      facts: [
+        { title: "Project", value: `!${opts.alias}` },
+        { title: "Path", value: opts.relativePath },
+        { title: "Size", value: opts.sizeLabel },
+        { title: "Type", value: opts.mimeType },
+      ],
+    },
+  ];
+
+  if (opts.preview != null && opts.preview.length > 0) {
+    const previewText = opts.truncated
+      ? `${opts.preview}\n\n…(preview truncated — use Download for the full file)`
+      : opts.preview;
+    const clipped =
+      previewText.length > 2500
+        ? `${previewText.slice(0, 2500)}\n…`
+        : previewText;
+    body.push({
+      type: "TextBlock",
+      text: "Preview",
+      weight: "Bolder",
+      spacing: "Medium",
+    });
+    body.push({
+      type: "TextBlock",
+      text: clipped,
+      wrap: true,
+      size: "Small",
+    });
+  }
+
   return {
     type: "AdaptiveCard",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.4",
-    body: [
-      {
-        type: "TextBlock",
-        text: "Project file",
-        weight: "Bolder",
-        size: "Medium",
-      },
-      {
-        type: "FactSet",
-        facts: [
-          { title: "Project", value: `!${opts.alias}` },
-          { title: "Path", value: opts.relativePath },
-          { title: "Size", value: opts.sizeLabel },
-          { title: "Type", value: opts.mimeType },
-        ],
-      },
-    ],
+    body,
     actions: [
       {
         type: "Action.OpenUrl",
-        title: "Download",
+        title: "Download file",
         url: opts.url,
       },
     ],
