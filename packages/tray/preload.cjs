@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld("agentr", {
   getConfig: () => ipcRenderer.invoke("config:get"),
   saveConfig: (config) => ipcRenderer.invoke("config:save", config),
   getStatus: () => ipcRenderer.invoke("status:get"),
+  getChecklist: () => ipcRenderer.invoke("checklist:get"),
+  resolveAgent: (configured) => ipcRenderer.invoke("agent:resolve", configured),
   reconnect: () => ipcRenderer.invoke("worker:reconnect"),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   windowMinimize: () => ipcRenderer.invoke("window:minimize"),

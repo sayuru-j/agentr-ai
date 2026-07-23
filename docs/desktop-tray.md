@@ -11,9 +11,7 @@ npm run dev:tray
 
 The **AgentR** settings window opens automatically when the worker token is missing.
 
-## Windows `.exe`
-
-Pack a portable app and NSIS installer (unsigned hobby build):
+## Windows builds: Install vs Portable
 
 ```powershell
 .\scripts\build.ps1 -Exe
@@ -21,12 +19,20 @@ Pack a portable app and NSIS installer (unsigned hobby build):
 npm run pack:tray
 ```
 
-Artifacts land in `packages/tray/release/`:
+Artifacts in `packages/tray/release/`:
 
-- `AgentR-0.1.0-portable.exe` — run anywhere, no install
-- `AgentR-0.1.0-win-x64.exe` — one-click NSIS installer
+| Artifact | When to use |
+|----------|-------------|
+| **`AgentR-*-portable.exe`** | No install. Double-click to run. Ideal for trying AgentR or keeping it on a USB drive. Config still goes to `%USERPROFILE%\.agent-relay\`. |
+| **`AgentR-*-win-x64.exe`** | One-click **NSIS installer** — Start Menu / desktop shortcuts. Prefer this for a daily driver on one PC. |
 
-Config still lives in `%USERPROFILE%\.agent-relay\config.json`.
+Both builds are **unsigned** hobby packages (`signAndEditExecutable: false`):
+
+- Windows **SmartScreen** may warn on first run → *More info* → *Run anyway*.
+- Building the `.exe` yourself may need **Developer Mode** (symlink privilege) if electron-builder’s winCodeSign extract fails; end users of the finished `.exe` do **not** need Dev Mode.
+- Code signing (a purchased cert) would remove SmartScreen friction — not included in this hobby setup.
+
+Config always lives in `%USERPROFILE%\.agent-relay\config.json` (same for portable and installed).
 
 ## Configure
 
@@ -37,11 +43,12 @@ Config still lives in `%USERPROFILE%\.agent-relay\config.json`.
 2. In the AgentR window:
    - **Relay URL** → `wss://YOUR_DOMAIN/ws`
    - **Worker token** → paste from step 1
+   - **Agent command** → leave as `agent`, or click **Find** (searches PATH and `%LOCALAPPDATA%\cursor-agent`)
    - **Projects** → alias → local folder (e.g. `frontend` → `C:/dev/app`)
    - Optional: enable **Dry run** to test without Cursor CLI
 3. Click **Save & connect**
 
-Config is persisted to `%USERPROFILE%\.agent-relay\config.json`.
+Home shows a **setup checklist**: token, agent CLI, relay online, paired in Teams.
 
 ## Tray menu
 

@@ -123,6 +123,7 @@ export class AgentRelayBot {
       }
       if (this.store.pair(userId, code)) {
         await context.sendActivity("Paired. Use `!alias your prompt`, `/ss`, or `/sshq`.");
+        this.notifyWorkerPairing();
       } else {
         await context.sendActivity("Invalid pairing code. Check the AgentR tray and try again.");
       }
@@ -132,6 +133,7 @@ export class AgentRelayBot {
     if (lower === "/unpair") {
       if (this.store.unpair(userId)) {
         await context.sendActivity("Unpaired.");
+        this.notifyWorkerPairing();
       } else {
         await context.sendActivity("You were not paired.");
       }
@@ -355,10 +357,21 @@ export class AgentRelayBot {
       type: "server.ack",
       message: "connected",
       pairingCode: this.store.pairingCode,
+      pairedUsers: this.store.pairedUserIds.size,
     });
     console.log(
       `[ws] worker hello ${hostname} v${version} repos=${repos.join(",") || "-"} pair=${this.store.pairingCode}`,
     );
+  }
+
+  /** Push paired-user count to the worker for tray checklist. */
+  private notifyWorkerPairing(): void {
+    this.hub.send({
+      type: "server.ack",
+      message: "pairing-updated",
+      pairingCode: this.store.pairingCode,
+      pairedUsers: this.store.pairedUserIds.size,
+    });
   }
 
   async onTaskLog(taskId: string, chunk: string): Promise<void> {

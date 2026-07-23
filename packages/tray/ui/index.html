@@ -48,6 +48,31 @@
           <button type="button" id="pairing-btn" class="pair-btn">/pair --------</button>
           <span class="muted">copy for Teams</span>
         </p>
+
+        <div id="checklist" class="checklist" aria-label="Setup checklist">
+          <p class="checklist-title">Setup</p>
+          <ul class="checklist-list">
+            <li id="check-token" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label">Worker token set</span>
+            </li>
+            <li id="check-agent" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label">Cursor agent CLI found</span>
+            </li>
+            <li id="check-relay" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label">Relay connected</span>
+            </li>
+            <li id="check-paired" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label">Paired in Teams</span>
+            </li>
+          </ul>
+          <p id="checklist-hint" class="checklist-hint"></p>
+          <p id="checklist-ready" class="checklist-ready" hidden>Ready — send <code>!alias your prompt</code> in Teams.</p>
+        </div>
+
         <p class="hint">
           Status updates live. Pair in Teams, then send
           <code>!alias your prompt</code>. Use <code>/ss</code> or <code>/sshq</code> for screenshots.
@@ -105,7 +130,11 @@
 
         <label class="field">
           <span>Agent command</span>
-          <input id="agentCommand" type="text" spellcheck="false" value="agent" />
+          <div class="row">
+            <input id="agentCommand" type="text" spellcheck="false" value="agent" />
+            <button type="button" id="find-agent" class="text-btn">Find</button>
+          </div>
+          <span id="agent-hint" class="hint">Searches PATH and <code>%LOCALAPPDATA%\cursor-agent</code>.</span>
         </label>
 
         <label class="field">

@@ -109,6 +109,8 @@ export const ServerAckSchema = z.object({
   type: z.literal("server.ack"),
   message: z.string(),
   pairingCode: z.string().optional(),
+  /** Number of Teams users currently paired (for tray checklist). */
+  pairedUsers: z.number().int().nonnegative().optional(),
 });
 export type ServerAck = z.infer<typeof ServerAckSchema>;
 

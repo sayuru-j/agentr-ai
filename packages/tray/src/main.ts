@@ -17,8 +17,11 @@ import {
   DEFAULT_CONFIG_PATH,
   saveWorkerConfig,
   defaultConfig,
+  resolveAgentCommand,
+  preferResolvedAgentCommand,
   type WorkerConfig,
   type WorkerStatus,
+  type ResolveAgentResult,
 } from "@agentr/worker";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -44,6 +47,7 @@ let consoleWindow: BrowserWindow | null = null;
 let worker: AgentRelayWorker | null = null;
 let pairingCode = "--------";
 let status: WorkerStatus = "offline";
+let pairedUsers = 0;
 let cachedAppIcon: Electron.NativeImage | null = null;
 let cachedTrayIcon: Electron.NativeImage | null = null;
 
@@ -75,7 +79,47 @@ function broadcastStatus(): void {
   settingsWindow?.webContents.send("status:changed", {
     status,
     pairingCode,
+    pairedUsers,
+    checklist: buildChecklist(),
   });
+}
+
+interface ChecklistState {
+  relayOk: boolean;
+  tokenSet: boolean;
+  agentFound: boolean;
+  paired: boolean;
+  agent: ResolveAgentResult;
+  allOk: boolean;
+}
+
+function buildChecklist(): ChecklistState {
+  const config = loadWorkerConfig();
+  const tokenSet = Boolean(
+    config.workerToken?.trim() && !config.workerToken.includes("PASTE_"),
+  );
+  const agent = resolveAgentCommand(config.agentCommand);
+  const agentFound = config.dryRun || agent.found;
+  const relayOk = status === "online" || status === "busy";
+  const paired = pairedUsers > 0;
+  return {
+    relayOk,
+    tokenSet,
+    agentFound,
+    paired,
+    agent,
+    allOk: relayOk && tokenSet && agentFound && paired,
+  };
+}
+
+/** Persist a concrete agent path when config still says bare `agent`. */
+function autoPersistResolvedAgent(config: WorkerConfig): WorkerConfig {
+  const preferred = preferResolvedAgentCommand(config.agentCommand);
+  if (preferred === config.agentCommand) return config;
+  const next = { ...config, agentCommand: preferred };
+  saveWorkerConfig(next);
+  console.log(`[tray] Resolved agent CLI → ${preferred}`);
+  return next;
 }
 
 function rebuildMenu(): void {
@@ -136,9 +180,9 @@ function openSettings(): void {
 
   settingsWindow = new BrowserWindow({
     width: 420,
-    height: 640,
+    height: 700,
     minWidth: 380,
-    minHeight: 520,
+    minHeight: 560,
     title: "AgentR",
     icon: appIcon(),
     backgroundColor: "#f7f6f3",
@@ -216,9 +260,13 @@ function startWorker(): void {
     saveWorkerConfig(cfg);
   }
 
-  const config = loadWorkerConfig();
+  const config = autoPersistResolvedAgent(loadWorkerConfig());
   console.log(
     `[tray] Config ${DEFAULT_CONFIG_PATH} · token ${config.workerToken ? `${config.workerToken.length} chars (…${config.workerToken.slice(-4)})` : "MISSING"}`,
+  );
+  const agent = resolveAgentCommand(config.agentCommand);
+  console.log(
+    `[tray] Agent CLI: ${agent.found ? `${agent.command} (${agent.source})` : "NOT FOUND — set path in Settings"}`,
   );
   worker = new AgentRelayWorker(config);
   worker.on("status", (s) => {
@@ -227,6 +275,10 @@ function startWorker(): void {
   });
   worker.on("pairingCode", (code) => {
     pairingCode = code;
+    rebuildMenu();
+  });
+  worker.on("pairedUsers", (count) => {
+    pairedUsers = count;
     rebuildMenu();
   });
   worker.on("log", (line) => {
@@ -262,7 +314,9 @@ function startWorker(): void {
   const needsSetup =
     !config.workerToken ||
     config.workerToken.includes("PASTE_") ||
-    config.relayUrl.includes("localhost");
+    config.relayUrl.includes("localhost") ||
+    config.relayUrl.includes("example.com") ||
+    (!config.dryRun && !resolveAgentCommand(config.agentCommand).found);
 
   if (needsSetup) {
     console.warn("[tray] Open settings to paste worker token and relay URL.");
@@ -278,13 +332,16 @@ function startWorker(): void {
 }
 
 function registerIpc(): void {
-  ipcMain.handle("config:get", () => loadWorkerConfig());
+  ipcMain.handle("config:get", () => {
+    return autoPersistResolvedAgent(loadWorkerConfig());
+  });
 
   ipcMain.handle("config:save", (_event, partial: Partial<WorkerConfig>) => {
+    const current = loadWorkerConfig();
     const next: WorkerConfig = {
-      ...loadWorkerConfig(),
+      ...current,
       ...partial,
-      projects: partial.projects ?? loadWorkerConfig().projects,
+      projects: partial.projects ?? current.projects,
     };
     if (!next.relayUrl?.trim()) {
       throw new Error("Relay URL is required");
@@ -292,13 +349,34 @@ function registerIpc(): void {
     if (!next.workerToken?.trim()) {
       throw new Error("Worker token is required");
     }
+    if (!next.agentCommand?.trim() || next.agentCommand.trim() === "agent") {
+      next.agentCommand = preferResolvedAgentCommand(
+        next.agentCommand || "agent",
+      );
+    }
     saveWorkerConfig(next);
     worker?.updateConfig(next);
     worker?.reconnect();
+    broadcastStatus();
     return next;
   });
 
-  ipcMain.handle("status:get", () => ({ status, pairingCode }));
+  ipcMain.handle("status:get", () => ({
+    status,
+    pairingCode,
+    pairedUsers,
+    checklist: buildChecklist(),
+  }));
+
+  ipcMain.handle("checklist:get", () => buildChecklist());
+
+  ipcMain.handle("agent:resolve", (_event, configured?: string) => {
+    const cmd =
+      typeof configured === "string" && configured.trim()
+        ? configured.trim()
+        : loadWorkerConfig().agentCommand;
+    return resolveAgentCommand(cmd);
+  });
 
   ipcMain.handle("worker:reconnect", () => {
     worker?.reconnect();

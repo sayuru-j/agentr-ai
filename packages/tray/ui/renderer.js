@@ -54,12 +54,64 @@ function readProjects() {
   return out;
 }
 
-function setStatus(status, pairingCode) {
+function setStatus(status, pairingCode, checklist) {
   const el = $("status-label");
   el.textContent = status;
   el.className = `title-status ${status}`;
   $("pairing-btn").textContent = `/pair ${pairingCode || "--------"}`;
   $("pairing-btn").dataset.code = pairingCode || "";
+  if (checklist) renderChecklist(checklist);
+}
+
+function renderChecklist(checklist) {
+  const items = [
+    {
+      id: "check-token",
+      ok: checklist.tokenSet,
+      hint: "Paste WORKER_TOKEN from the VM in Settings.",
+    },
+    {
+      id: "check-agent",
+      ok: checklist.agentFound,
+      hint: checklist.agent?.found
+        ? `Using ${checklist.agent.command}`
+        : "Install Cursor Agent CLI, or click Find in Settings.",
+    },
+    {
+      id: "check-relay",
+      ok: checklist.relayOk,
+      hint: "Save & connect, then wait until status is online.",
+    },
+    {
+      id: "check-paired",
+      ok: checklist.paired,
+      hint: "In Teams send the /pair code from above.",
+    },
+  ];
+
+  let firstFailHint = "";
+  for (const item of items) {
+    const li = $(item.id);
+    if (!li) continue;
+    li.dataset.ok = item.ok ? "true" : "false";
+    if (!item.ok && !firstFailHint) firstFailHint = item.hint;
+  }
+
+  const ready = $("checklist-ready");
+  const hint = $("checklist-hint");
+  if (checklist.allOk) {
+    ready.hidden = false;
+    hint.hidden = true;
+    hint.textContent = "";
+  } else {
+    ready.hidden = true;
+    hint.hidden = false;
+    hint.textContent = firstFailHint;
+  }
+
+  if (checklist.agent?.found && checklist.agent.detail) {
+    $("agent-hint").textContent = `Found (${checklist.agent.source}): ${checklist.agent.detail}`;
+  }
 }
 
 function updateTokenSavedLabel(token) {
@@ -140,6 +192,9 @@ async function saveAll(connect = true) {
     savedToken = saved.workerToken;
     $("workerToken").value = savedToken;
     updateTokenSavedLabel(savedToken);
+    $("agentCommand").value = saved.agentCommand || $("agentCommand").value;
+    const live = await window.agentr.getStatus();
+    setStatus(live.status, live.pairingCode, live.checklist);
     showMsg(connect ? "Saved — connecting…" : "Projects saved");
   } catch (err) {
     showMsg(err?.message || "Save failed", true);
@@ -159,10 +214,10 @@ async function boot() {
     window.agentr.getStatus(),
   ]);
   fillForm(config);
-  setStatus(live.status, live.pairingCode);
+  setStatus(live.status, live.pairingCode, live.checklist);
 
   window.agentr.onStatus((payload) => {
-    setStatus(payload.status, payload.pairingCode);
+    setStatus(payload.status, payload.pairingCode, payload.checklist);
   });
 
   $("add-project").addEventListener("click", () => addProject());
@@ -171,6 +226,19 @@ async function boot() {
     const show = input.type === "password";
     input.type = show ? "text" : "password";
     $("toggle-token").textContent = show ? "Hide" : "Show";
+  });
+
+  $("find-agent").addEventListener("click", async () => {
+    const result = await window.agentr.resolveAgent($("agentCommand").value);
+    if (result.found) {
+      $("agentCommand").value = result.command;
+      $("agent-hint").textContent = `Found (${result.source}): ${result.detail || result.command}`;
+      showMsg("Agent CLI found — Save & connect to keep it");
+    } else {
+      $("agent-hint").textContent =
+        "Not found. Install Cursor Agent CLI, or paste the full path to agent.cmd.";
+      showMsg("Agent CLI not found", true);
+    }
   });
 
   $("pairing-btn").addEventListener("click", async () => {

@@ -9,3 +9,9 @@ export {
   type WorkerConfig,
 } from "./config.js";
 export { TaskRunner, newApprovalId } from "./runner.js";
+export {
+  resolveAgentCommand,
+  preferResolvedAgentCommand,
+  type ResolveAgentResult,
+  type AgentResolveSource,
+} from "./resolve-agent.js";

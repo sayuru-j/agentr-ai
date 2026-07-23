@@ -8,6 +8,7 @@ import {
 import { hostname as osHostname } from "node:os";
 import WebSocket from "ws";
 import type { WorkerConfig } from "./config.js";
+import { preferResolvedAgentCommand } from "./resolve-agent.js";
 import { newApprovalId, TaskRunner } from "./runner.js";
 import { captureAllDisplays } from "./screenshot.js";
 import { uploadScreenshotsHttps } from "./upload.js";
@@ -17,6 +18,8 @@ export type WorkerStatus = "offline" | "connecting" | "online" | "busy";
 export interface WorkerEvents {
   status: (status: WorkerStatus) => void;
   pairingCode: (code: string) => void;
+  /** Teams users paired on the relay (from server.ack). */
+  pairedUsers: (count: number) => void;
   log: (line: string) => void;
   error: (err: Error) => void;
   /** Fired when the relay rejects the worker token (no auto-reconnect). */
@@ -48,6 +51,7 @@ export class AgentRelayWorker {
   private authBlocked = false;
   private status: WorkerStatus = "offline";
   private pairingCode = generatePairingCode();
+  private pairedUsers = 0;
   private runners = new Map<string, TaskRunner>();
   private pendingApprovals = new Map<string, PendingApproval>();
   private backoffMs = 1000;
@@ -80,6 +84,10 @@ export class AgentRelayWorker {
 
   getPairingCode(): string {
     return this.pairingCode;
+  }
+
+  getPairedUsers(): number {
+    return this.pairedUsers;
   }
 
   getStatus(): WorkerStatus {
@@ -225,6 +233,10 @@ export class AgentRelayWorker {
           this.pairingCode = msg.pairingCode;
           this.emit("pairingCode", this.pairingCode);
         }
+        if (typeof msg.pairedUsers === "number") {
+          this.pairedUsers = msg.pairedUsers;
+          this.emit("pairedUsers", this.pairedUsers);
+        }
         this.emit("log", `Server ack: ${msg.message}`);
         break;
       case "task.create":
@@ -297,7 +309,7 @@ export class AgentRelayWorker {
       taskId,
       prompt,
       cwd,
-      agentCommand: this.config.agentCommand,
+      agentCommand: preferResolvedAgentCommand(this.config.agentCommand),
       agentModel: this.config.agentModel,
       dryRun: this.config.dryRun,
       onLog: (stream, chunk) => {

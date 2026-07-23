@@ -9,7 +9,7 @@ Authorization: Bearer <WORKER_TOKEN>
 | Type | Direction | Purpose |
 |------|-----------|---------|
 | `worker.hello` | W→S | hostname, version, repos, pairing code |
-| `server.ack` | S→W | connected + optional pairing code |
+| `server.ack` | S→W | connected + optional pairing code + `pairedUsers` |
 | `task.create` | S→W | prompt + project alias |
 | `task.log` | W→S | stdout/stderr chunks |
 | `task.approval_request` | W→S | risky command |
