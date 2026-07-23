@@ -10,6 +10,8 @@ Authorization: Bearer <WORKER_TOKEN>
 |------|-----------|---------|
 | `worker.hello` | W→S | hostname, version, repos, pairing code, `agentModel` |
 | `server.ack` | S→W | connected + optional pairing code + `pairedUsers` |
+| `worker.ping` | S→W | health probe (`requestId`, `sentAt`) for `/status` latency |
+| `worker.pong` | W→S | round-trip reply + optional per-project disk free/total |
 | `worker.set_config` | S→W | set `agentModel` (persisted on PC) |
 | `worker.config` | W→S | confirm current `agentModel` |
 | `task.create` | S→W | prompt + project alias + optional `files` / `agentModel` |

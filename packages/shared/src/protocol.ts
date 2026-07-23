@@ -66,6 +66,14 @@ export const WorkerSetConfigSchema = z.object({
 });
 export type WorkerSetConfig = z.infer<typeof WorkerSetConfigSchema>;
 
+/** Server → Worker: health ping (latency + disk probe). */
+export const WorkerPingSchema = z.object({
+  type: z.literal("worker.ping"),
+  requestId: z.string(),
+  sentAt: z.number(),
+});
+export type WorkerPing = z.infer<typeof WorkerPingSchema>;
+
 /** Worker → Server: streamed log chunk */
 export const TaskLogSchema = z.object({
   type: z.literal("task.log"),
@@ -126,6 +134,24 @@ export const WorkerConfigSchema = z.object({
 });
 export type WorkerConfigMessage = z.infer<typeof WorkerConfigSchema>;
 
+export const ProjectDiskSchema = z.object({
+  alias: z.string(),
+  path: z.string(),
+  freeBytes: z.number().optional(),
+  totalBytes: z.number().optional(),
+  error: z.string().optional(),
+});
+export type ProjectDisk = z.infer<typeof ProjectDiskSchema>;
+
+/** Worker → Server: health pong */
+export const WorkerPongSchema = z.object({
+  type: z.literal("worker.pong"),
+  requestId: z.string(),
+  sentAt: z.number(),
+  projects: z.array(ProjectDiskSchema).optional(),
+});
+export type WorkerPong = z.infer<typeof WorkerPongSchema>;
+
 /** Server → Worker: cancel a running task */
 export const TaskCancelSchema = z.object({
   type: z.literal("task.cancel"),
@@ -149,6 +175,7 @@ export const ServerToWorkerSchema = z.discriminatedUnion("type", [
   TaskApprovalResponseSchema,
   TaskCancelSchema,
   WorkerSetConfigSchema,
+  WorkerPingSchema,
   ServerAckSchema,
 ]);
 export type ServerToWorker = z.infer<typeof ServerToWorkerSchema>;
@@ -160,6 +187,7 @@ export const WorkerToServerSchema = z.discriminatedUnion("type", [
   TaskStatusMessageSchema,
   TaskArtifactSchema,
   WorkerConfigSchema,
+  WorkerPongSchema,
 ]);
 export type WorkerToServer = z.infer<typeof WorkerToServerSchema>;
 

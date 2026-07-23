@@ -206,6 +206,20 @@ export function buildStatusCard(opts: {
   version?: string;
   projects: string[];
   agentModel?: string;
+  latencyMs?: number | null;
+  lastTask?: {
+    status: string;
+    prompt: string;
+    projectAlias?: string;
+    exitCode?: number;
+    createdAt: number;
+  } | null;
+  disks?: Array<{
+    alias: string;
+    freeLabel: string;
+    totalLabel?: string;
+    error?: string;
+  }>;
 }) {
   const workerLabel = opts.workerOnline
     ? opts.hostname
@@ -223,20 +237,73 @@ export function buildStatusCard(opts: {
   if (opts.agentModel) {
     facts.push({ title: "Model", value: opts.agentModel });
   }
+  if (typeof opts.latencyMs === "number") {
+    facts.push({ title: "Latency", value: `${opts.latencyMs} ms` });
+  } else if (opts.workerOnline && opts.latencyMs === null) {
+    facts.push({ title: "Latency", value: "timeout" });
+  }
+
+  if (opts.lastTask) {
+    const when = new Date(opts.lastTask.createdAt)
+      .toISOString()
+      .replace("T", " ")
+      .slice(0, 16);
+    const exit =
+      typeof opts.lastTask.exitCode === "number"
+        ? ` · exit ${opts.lastTask.exitCode}`
+        : "";
+    const alias = opts.lastTask.projectAlias
+      ? `!${opts.lastTask.projectAlias} `
+      : "";
+    const prompt =
+      opts.lastTask.prompt.length > 80
+        ? `${opts.lastTask.prompt.slice(0, 80)}…`
+        : opts.lastTask.prompt;
+    facts.push({
+      title: "Last task",
+      value: `${opts.lastTask.status}${exit} · ${when} UTC`,
+    });
+    facts.push({
+      title: "Last prompt",
+      value: `${alias}${prompt}`,
+    });
+  }
+
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: "AgentR status",
+      weight: "Bolder",
+      size: "Medium",
+    },
+    { type: "FactSet", facts },
+  ];
+
+  if (opts.disks && opts.disks.length > 0) {
+    body.push({
+      type: "TextBlock",
+      text: "Project disk",
+      weight: "Bolder",
+      spacing: "Medium",
+    });
+    body.push({
+      type: "FactSet",
+      facts: opts.disks.map((d) => ({
+        title: `!${d.alias}`,
+        value: d.error
+          ? d.error
+          : d.totalLabel
+            ? `${d.freeLabel} free / ${d.totalLabel}`
+            : `${d.freeLabel} free`,
+      })),
+    });
+  }
 
   return {
     type: "AdaptiveCard",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.4",
-    body: [
-      {
-        type: "TextBlock",
-        text: "AgentR status",
-        weight: "Bolder",
-        size: "Medium",
-      },
-      { type: "FactSet", facts },
-    ],
+    body,
   };
 }
 

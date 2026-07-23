@@ -80,7 +80,43 @@ function setStatus(status, pairingCode, checklist, extra = {}) {
   $("pairing-btn").dataset.code = pairingCode || "";
   if (checklist) renderChecklist(checklist);
   renderUpdate(extra.update);
+  renderConnection(extra.connection);
   $("lock-banner").hidden = !extra.sessionLocked;
+}
+
+function renderConnection(connection) {
+  const banner = $("connection-banner");
+  if (!banner) return;
+  if (!connection || connection.kind === "ok") {
+    banner.hidden = true;
+    banner.dataset.kind = "";
+    return;
+  }
+  banner.hidden = false;
+  banner.dataset.kind = connection.kind;
+  let text = "";
+  switch (connection.kind) {
+    case "connecting":
+      text = connection.detail || "Connecting to relay…";
+      break;
+    case "reconnecting": {
+      const secs = Math.max(1, Math.round((connection.inMs || 0) / 1000));
+      text = `${connection.reason || "Connection lost"} — retry #${connection.attempt} in ${secs}s. If the relay restarted, wait; then re-pair in Teams if needed.`;
+      break;
+    }
+    case "unauthorized":
+      text = connection.message || "Worker token rejected. Paste WORKER_TOKEN from the VM.";
+      break;
+    case "re_pair":
+      text = `${connection.message || "Re-pair needed."} Send /pair ${connection.pairingCode || ""} in Teams.`;
+      break;
+    case "offline":
+      text = connection.reason || "Offline";
+      break;
+    default:
+      text = "Connection issue";
+  }
+  $("connection-text").textContent = text;
 }
 
 function renderUpdate(update) {
@@ -296,6 +332,14 @@ async function boot() {
   });
 
   $("update-open").addEventListener("click", () => window.agentr.openUpdate());
+  $("export-config").addEventListener("click", async () => {
+    const result = await window.agentr.exportConfig();
+    if (result.ok) {
+      showMsg(`Exported to ${result.path}`);
+    } else if (result.error && result.error !== "Cancelled") {
+      showMsg(result.error, true);
+    }
+  });
   $("check-updates-now").addEventListener("click", async () => {
     const result = await window.agentr.checkUpdates();
     renderUpdate(result);

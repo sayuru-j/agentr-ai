@@ -47,6 +47,9 @@ async function main(): Promise<void> {
       case "worker.config":
         bot.onWorkerConfig(msg.agentModel);
         break;
+      case "worker.pong":
+        bot.onWorkerPong(msg.requestId, msg.sentAt, msg.projects);
+        break;
       case "task.log":
         void bot.onTaskLog(msg.taskId, msg.chunk);
         break;

@@ -1,5 +1,6 @@
 import {
   parseProjectAlias,
+  type ProjectDisk,
   type TaskApprovalResponse,
   type TaskFile,
   type TaskStatus,
@@ -35,13 +36,31 @@ type ApprovalPayload = {
   approvalId?: string;
 };
 
+type PendingPong = {
+  resolve: (value: { latencyMs: number; projects: ProjectDisk[] }) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 /** Flush log thread replies when card buffer grows past this many new chars. */
 const THREAD_LOG_CHUNK = 2200;
+
+function formatBytes(n: number | undefined): string {
+  if (n === undefined || !Number.isFinite(n)) return "?";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
 
 export class AgentRelayBot {
   readonly adapter: CloudAdapter | null;
   private logUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private artifactTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pendingPongs = new Map<string, PendingPong>();
 
   constructor(
     private readonly config: ServerConfig,
@@ -187,21 +206,7 @@ export class AgentRelayBot {
     }
 
     if (lower === "/status") {
-      const worker = this.store.getWorker();
-      await context.sendActivity(
-        MessageFactory.attachment(
-          CardFactory.adaptiveCard(
-            buildStatusCard({
-              paired: this.store.isPaired(userId),
-              workerOnline: Boolean(worker),
-              hostname: worker?.hostname,
-              version: worker?.version,
-              projects: worker?.repos ?? [],
-              agentModel: worker?.agentModel,
-            }),
-          ),
-        ),
-      );
+      await this.handleStatusCommand(context, userId);
       return;
     }
 
@@ -354,6 +359,109 @@ export class AgentRelayBot {
       prompt: effectivePrompt,
       files,
       hostname: worker.hostname,
+    });
+  }
+
+  private async handleStatusCommand(
+    context: TurnContext,
+    userId: string,
+  ): Promise<void> {
+    const worker = this.store.getWorker();
+    const last = this.store.getLastTaskForConversation(
+      context.activity.conversation.id,
+    );
+    let latencyMs: number | null | undefined;
+    let disks:
+      | Array<{
+          alias: string;
+          freeLabel: string;
+          totalLabel?: string;
+          error?: string;
+        }>
+      | undefined;
+
+    if (worker) {
+      const health = await this.probeWorkerHealth(2500);
+      if (health) {
+        latencyMs = health.latencyMs;
+        disks = health.projects.map((p) => ({
+          alias: p.alias,
+          freeLabel: formatBytes(p.freeBytes),
+          totalLabel: formatBytes(p.totalBytes),
+          error: p.error,
+        }));
+      } else {
+        latencyMs = null;
+      }
+    }
+
+    await context.sendActivity(
+      MessageFactory.attachment(
+        CardFactory.adaptiveCard(
+          buildStatusCard({
+            paired: this.store.isPaired(userId),
+            workerOnline: Boolean(worker),
+            hostname: worker?.hostname,
+            version: worker?.version,
+            projects: worker?.repos ?? [],
+            agentModel: worker?.agentModel,
+            latencyMs,
+            lastTask: last
+              ? {
+                  status: last.status,
+                  prompt: last.prompt,
+                  projectAlias: last.projectAlias,
+                  exitCode: last.exitCode,
+                  createdAt: last.createdAt,
+                }
+              : null,
+            disks,
+          }),
+        ),
+      ),
+    );
+  }
+
+  /** Round-trip ping the worker for latency + project disk free space. */
+  private probeWorkerHealth(
+    timeoutMs: number,
+  ): Promise<{ latencyMs: number; projects: ProjectDisk[] } | null> {
+    const requestId = randomUUID();
+    const sentAt = Date.now();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingPongs.delete(requestId);
+        resolve(null);
+      }, timeoutMs);
+      this.pendingPongs.set(requestId, {
+        timer,
+        resolve: (value) => resolve(value),
+      });
+      const ok = this.hub.send({
+        type: "worker.ping",
+        requestId,
+        sentAt,
+      });
+      if (!ok) {
+        clearTimeout(timer);
+        this.pendingPongs.delete(requestId);
+        resolve(null);
+      }
+    });
+  }
+
+  onWorkerPong(
+    requestId: string,
+    sentAt: number,
+    projects?: ProjectDisk[],
+  ): void {
+    const pending = this.pendingPongs.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingPongs.delete(requestId);
+    pending.resolve({
+      latencyMs: Math.max(0, Date.now() - sentAt),
+      projects: projects ?? [],
     });
   }
 

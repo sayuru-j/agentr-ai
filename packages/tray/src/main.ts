@@ -24,8 +24,9 @@ import {
   type WorkerConfig,
   type WorkerStatus,
   type ResolveAgentResult,
+  type ConnectionHint,
 } from "@agentr/worker";
-import { existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkGithubReleaseUpdate, type UpdateCheckResult } from "./updates.js";
@@ -55,6 +56,7 @@ let cachedAppIcon: Electron.NativeImage | null = null;
 let cachedTrayIcon: Electron.NativeImage | null = null;
 let lastUpdate: UpdateCheckResult | null = null;
 let sessionLocked = false;
+let connectionHint: ConnectionHint = { kind: "offline", reason: "Starting…" };
 
 function appVersion(): string {
   try {
@@ -64,6 +66,50 @@ function appVersion(): string {
     return pkg.version || "0.1.0";
   } catch {
     return "0.1.0";
+  }
+}
+
+function broadcastStatus(): void {
+  settingsWindow?.webContents.send("status:changed", {
+    status,
+    pairingCode,
+    pairedUsers,
+    checklist: buildChecklist(),
+    update: lastUpdate,
+    sessionLocked,
+    connection: connectionHint,
+  });
+}
+
+async function exportConfigBackup(): Promise<{
+  ok: boolean;
+  path?: string;
+  error?: string;
+}> {
+  ensureConfigDir();
+  if (!existsSync(DEFAULT_CONFIG_PATH)) {
+    return { ok: false, error: "No config.json yet — Save & connect first." };
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  const result = await dialog.showSaveDialog({
+    title: "Export AgentR config",
+    defaultPath: join(
+      app.getPath("documents"),
+      `agent-relay-config-${stamp}.json`,
+    ),
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (result.canceled || !result.filePath) {
+    return { ok: false, error: "Cancelled" };
+  }
+  try {
+    copyFileSync(DEFAULT_CONFIG_PATH, result.filePath);
+    return { ok: true, path: result.filePath };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -89,17 +135,6 @@ function trayIcon(): Electron.NativeImage {
   const base = appIcon();
   cachedTrayIcon = base.isEmpty() ? base : base.resize({ width: 16, height: 16 });
   return cachedTrayIcon;
-}
-
-function broadcastStatus(): void {
-  settingsWindow?.webContents.send("status:changed", {
-    status,
-    pairingCode,
-    pairedUsers,
-    checklist: buildChecklist(),
-    update: lastUpdate,
-    sessionLocked,
-  });
 }
 
 function applyLoginItemSettings(config: WorkerConfig): void {
@@ -227,6 +262,12 @@ function rebuildMenu(): void {
       click: () => {
         ensureConfigDir();
         void shell.openPath(DEFAULT_CONFIG_DIR);
+      },
+    },
+    {
+      label: "Export config…",
+      click: () => {
+        void exportConfigBackup();
       },
     },
     { type: "separator" },
@@ -370,6 +411,26 @@ function startWorker(): void {
     }
     openSettings();
   });
+  worker.on("connection", (hint: ConnectionHint) => {
+    connectionHint = hint;
+    broadcastStatus();
+    if (!Notification.isSupported()) return;
+    if (hint.kind === "re_pair") {
+      new Notification({
+        title: "AgentR — re-pair needed",
+        body: hint.message,
+      }).show();
+      openSettings();
+    } else if (hint.kind === "reconnecting" && hint.attempt === 1) {
+      const relayish = /restart|going away|unexpectedly/i.test(hint.reason);
+      new Notification({
+        title: relayish
+          ? "AgentR — relay restarted?"
+          : "AgentR — reconnecting",
+        body: hint.reason,
+      }).show();
+    }
+  });
   worker.on("taskStart", (info) => {
     openAgentConsole(info);
   });
@@ -398,6 +459,7 @@ function startWorker(): void {
   applyLoginItemSettings(config);
   worker.start();
   pairingCode = worker.getPairingCode();
+  connectionHint = worker.getConnectionHint();
   rebuildMenu();
 
   if (needsSetup || !config.startMinimized) {
@@ -450,9 +512,12 @@ function registerIpc(): void {
     checklist: buildChecklist(),
     update: lastUpdate,
     sessionLocked,
+    connection: connectionHint,
     version: appVersion(),
     packaged: app.isPackaged,
   }));
+
+  ipcMain.handle("config:export", () => exportConfigBackup());
 
   ipcMain.handle("checklist:get", () => buildChecklist());
 

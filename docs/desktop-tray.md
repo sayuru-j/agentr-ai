@@ -34,6 +34,8 @@ Both builds are **unsigned** hobby packages (`signAndEditExecutable: false`):
 
 Config always lives in `%USERPROFILE%\.agent-relay\config.json` (same for portable and installed).
 
+**Backup:** Settings → **Export config…** (or tray menu **Export config…**) copies that file to a path you choose. It includes the worker token — store the export privately.
+
 ## Configure
 
 1. On the VM:
@@ -50,6 +52,7 @@ Config always lives in `%USERPROFILE%\.agent-relay\config.json` (same for portab
 3. Click **Save & connect**
 
 Home shows a **setup checklist**: token, agent CLI, relay online, paired in Teams.  
+When the relay drops, Home shows a **connection banner** (reconnect countdown, unauthorized token, or re-pair needed after a relay restart).  
 `/ss` fails clearly if Windows is locked; AgentR nudges displays awake when unlocked.
 
 ## Tray menu
@@ -58,6 +61,7 @@ Home shows a **setup checklist**: token, agent CLI, relay online, paired in Team
 - **Open AgentR…** (settings)
 - **Reconnect**
 - Open config folder
+- **Export config…**
 - Quit
 
 Double-click the tray icon to reopen settings. Click the pairing line to copy `/pair CODE`.
@@ -70,6 +74,8 @@ Double-click the tray icon to reopen settings. Click the pairing line to copy `/
 | connecting | Dialing WSS |
 | online | Connected; ready for tasks |
 | busy | Running a task |
+
+Reconnect disconnect reasons call out **relay restart / network** vs **bad token**. After a relay restart with empty pairings, AgentR prompts you to send `/pair` again.
 
 ## Headless worker (no UI)
 

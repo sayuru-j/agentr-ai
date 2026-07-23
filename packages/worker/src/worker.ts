@@ -14,17 +14,34 @@ import { writeTaskInboxFiles } from "./inbox.js";
 import { preferResolvedAgentCommand } from "./resolve-agent.js";
 import { prepareForScreenshot } from "./display.js";
 import { projectPath, type ProjectEntry } from "./config.js";
+import { probeProjectDisks } from "./disk.js";
 import { newApprovalId, TaskRunner } from "./runner.js";
 import { captureAllDisplays } from "./screenshot.js";
 import { uploadScreenshotsHttps } from "./upload.js";
 
 export type WorkerStatus = "offline" | "connecting" | "online" | "busy";
 
+/** Human-facing connection state for the tray. */
+export type ConnectionHint =
+  | { kind: "ok"; detail?: string }
+  | { kind: "connecting"; detail?: string }
+  | {
+      kind: "reconnecting";
+      attempt: number;
+      inMs: number;
+      reason: string;
+    }
+  | { kind: "unauthorized"; message: string }
+  | { kind: "re_pair"; message: string; pairingCode: string }
+  | { kind: "offline"; reason: string };
+
 export interface WorkerEvents {
   status: (status: WorkerStatus) => void;
   pairingCode: (code: string) => void;
   /** Teams users paired on the relay (from server.ack). */
   pairedUsers: (count: number) => void;
+  /** Rich reconnect / re-pair messaging for the tray. */
+  connection: (hint: ConnectionHint) => void;
   log: (line: string) => void;
   error: (err: Error) => void;
   /** Fired when the relay rejects the worker token (no auto-reconnect). */
@@ -65,6 +82,10 @@ export class AgentRelayWorker {
   private status: WorkerStatus = "offline";
   private pairingCode = generatePairingCode();
   private pairedUsers = 0;
+  private wasOnline = false;
+  private pairedBeforeDisconnect = 0;
+  private reconnectAttempt = 0;
+  private lastDisconnectReason = "";
   private runners = new Map<string, TaskRunner>();
   private pendingApprovals = new Map<string, PendingApproval>();
   private taskQueue: QueuedTask[] = [];
@@ -131,11 +152,54 @@ export class AgentRelayWorker {
 
   reconnect(): void {
     this.authBlocked = false;
+    this.reconnectAttempt = 0;
+    this.backoffMs = 1000;
+    this.setConnection({ kind: "connecting", detail: "Manual reconnect…" });
     this.ws?.close();
     this.ws = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.backoffMs = 1000;
     this.connect();
+  }
+
+  getConnectionHint(): ConnectionHint {
+    if (this.authBlocked) {
+      return {
+        kind: "unauthorized",
+        message:
+          "Relay rejected the worker token. Paste WORKER_TOKEN from the VM and Save & connect.",
+      };
+    }
+    if (this.status === "connecting") {
+      return { kind: "connecting", detail: "Dialing the relay…" };
+    }
+    if (this.status === "online" || this.status === "busy") {
+      return { kind: "ok" };
+    }
+    if (this.reconnectTimer) {
+      return {
+        kind: "reconnecting",
+        attempt: this.reconnectAttempt,
+        inMs: this.backoffMs,
+        reason: this.lastDisconnectReason || "Connection lost",
+      };
+    }
+    return {
+      kind: "offline",
+      reason: this.lastDisconnectReason || "Not connected",
+    };
+  }
+
+  private setConnection(hint: ConnectionHint): void {
+    this.emit("connection", hint);
+  }
+
+  private classifyDisconnect(code: number, reason: string): string {
+    if (code === 4001) return "Unauthorized (bad worker token)";
+    if (code === 4000) return "Relay replaced this worker connection";
+    if (code === 1001) return "Relay going away (restart?)";
+    if (code === 1006) return "Relay closed unexpectedly (restart or network)";
+    if (code === 1000) return "Clean disconnect";
+    return reason || `Disconnected (code ${code})`;
   }
 
   private setStatus(status: WorkerStatus): void {
@@ -156,6 +220,7 @@ export class AgentRelayWorker {
     }
 
     this.setStatus("connecting");
+    this.setConnection({ kind: "connecting", detail: "Dialing the relay…" });
     this.emit("log", `Connecting to ${this.config.relayUrl}…`);
 
     // Put token in query as well — some proxies drop Authorization on WS upgrade
@@ -179,10 +244,21 @@ export class AgentRelayWorker {
     this.ws = ws;
 
     ws.on("open", () => {
+      const recovered = this.wasOnline;
       this.backoffMs = 1000;
+      this.reconnectAttempt = 0;
       this.setStatus(this.runners.size > 0 ? "busy" : "online");
-      this.emit("log", "Connected");
+      this.emit(
+        "log",
+        recovered
+          ? "Reconnected to relay"
+          : "Connected",
+      );
       this.emit("pairingCode", this.pairingCode);
+      this.setConnection({
+        kind: "ok",
+        detail: recovered ? "Reconnected after relay drop" : undefined,
+      });
       this.send({
         type: "worker.hello",
         hostname: osHostname(),
@@ -208,17 +284,21 @@ export class AgentRelayWorker {
 
     ws.on("close", (code, reason) => {
       const why = reason.toString() || "";
-      this.emit("log", `Disconnected (${code}) ${why}`.trim());
+      this.lastDisconnectReason = this.classifyDisconnect(code, why);
+      this.pairedBeforeDisconnect = this.pairedUsers;
+      this.wasOnline =
+        this.wasOnline || this.status === "online" || this.status === "busy";
+      this.emit("log", `Disconnected (${code}) ${this.lastDisconnectReason}`);
       this.ws = null;
       this.setStatus("offline");
 
       if (code === 4001) {
         this.authBlocked = true;
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-        this.emit(
-          "unauthorized",
-          "Relay rejected the worker token (unauthorized). Copy WORKER_TOKEN from the VM and Save & connect again.",
-        );
+        const message =
+          "Relay rejected the worker token (unauthorized). Copy WORKER_TOKEN from the VM and Save & connect again.";
+        this.setConnection({ kind: "unauthorized", message });
+        this.emit("unauthorized", message);
         return;
       }
 
@@ -232,9 +312,19 @@ export class AgentRelayWorker {
 
   private scheduleReconnect(): void {
     if (this.stopped || this.authBlocked) return;
+    this.reconnectAttempt += 1;
     const wait = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 2, 30_000);
-    this.emit("log", `Reconnecting in ${Math.round(wait / 1000)}s…`);
+    this.emit(
+      "log",
+      `${this.lastDisconnectReason} — reconnecting in ${Math.round(wait / 1000)}s (attempt ${this.reconnectAttempt})…`,
+    );
+    this.setConnection({
+      kind: "reconnecting",
+      attempt: this.reconnectAttempt,
+      inMs: wait,
+      reason: this.lastDisconnectReason || "Connection lost",
+    });
     this.reconnectTimer = setTimeout(() => this.connect(), wait);
   }
 
@@ -251,10 +341,37 @@ export class AgentRelayWorker {
           this.emit("pairingCode", this.pairingCode);
         }
         if (typeof msg.pairedUsers === "number") {
+          const prev = this.pairedUsers;
           this.pairedUsers = msg.pairedUsers;
           this.emit("pairedUsers", this.pairedUsers);
+          if (
+            this.wasOnline &&
+            this.pairedBeforeDisconnect > 0 &&
+            msg.pairedUsers === 0 &&
+            prev === 0
+          ) {
+            this.setConnection({
+              kind: "re_pair",
+              pairingCode: this.pairingCode,
+              message:
+                "Relay has no paired Teams users. Send /pair with the code from the tray.",
+            });
+          } else if (msg.message === "connected" || msg.message === "pairing-updated") {
+            if (msg.pairedUsers > 0 || !this.wasOnline) {
+              this.setConnection({ kind: "ok" });
+            }
+          }
         }
+        this.wasOnline = true;
         this.emit("log", `Server ack: ${msg.message}`);
+        break;
+      case "worker.ping":
+        this.send({
+          type: "worker.pong",
+          requestId: msg.requestId,
+          sentAt: msg.sentAt,
+          projects: probeProjectDisks(this.config.projects),
+        });
         break;
       case "task.create":
         this.enqueueTask({

@@ -1,4 +1,4 @@
-export { AgentRelayWorker, type WorkerEvents, type WorkerStatus } from "./worker.js";
+export { AgentRelayWorker, type WorkerEvents, type WorkerStatus, type ConnectionHint } from "./worker.js";
 export {
   loadWorkerConfig,
   saveWorkerConfig,
@@ -24,3 +24,4 @@ export {
   wakeDisplays,
   type DisplayState,
 } from "./display.js";
+export { probeProjectDisks, formatBytes } from "./disk.js";

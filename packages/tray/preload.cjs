@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("agentr", {
   getConfig: () => ipcRenderer.invoke("config:get"),
   saveConfig: (config) => ipcRenderer.invoke("config:save", config),
+  exportConfig: () => ipcRenderer.invoke("config:export"),
   getStatus: () => ipcRenderer.invoke("status:get"),
   getChecklist: () => ipcRenderer.invoke("checklist:get"),
   resolveAgent: (configured) => ipcRenderer.invoke("agent:resolve", configured),

@@ -42,7 +42,7 @@ or
 /status
 ```
 
-Shows PC hostname and aliases. “Worker offline” → fix Step B.
+Shows PC hostname, aliases, **latency**, **last task**, and **project disk free space**. “Worker offline” → fix Step B.
 
 ## E — First task
 

@@ -67,8 +67,11 @@ export class WorkerHub {
         const parsed = safeParseRelayMessage(data);
         if (!parsed.success) return;
         const msg = parsed.data as WorkerToServer;
+        // Forward all worker→server protocol messages
         if (
           msg.type === "worker.hello" ||
+          msg.type === "worker.config" ||
+          msg.type === "worker.pong" ||
           msg.type === "task.log" ||
           msg.type === "task.approval_request" ||
           msg.type === "task.status" ||
