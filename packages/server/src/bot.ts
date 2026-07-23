@@ -1,5 +1,6 @@
 import {
   parseProjectAlias,
+  type FileResult,
   type ProjectDisk,
   type TaskApprovalResponse,
   type TaskFile,
@@ -18,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { downloadActivityFiles } from "./attachments.js";
 import {
   buildApprovalCard,
+  buildFileGetCard,
   buildHelpCard,
   buildLastTaskCard,
   buildProjectsCard,
@@ -41,6 +43,19 @@ type PendingPong = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type PendingFileGet = {
+  alias: string;
+  relativePath: string;
+  conversation: {
+    serviceUrl: string;
+    conversationId: string;
+    activityId?: string;
+    tenantId?: string;
+  };
+  rootActivityId?: string;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 /** Flush log thread replies when card buffer grows past this many new chars. */
 const THREAD_LOG_CHUNK = 2200;
 
@@ -61,6 +76,7 @@ export class AgentRelayBot {
   private logUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private artifactTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private pendingPongs = new Map<string, PendingPong>();
+  private pendingFileGets = new Map<string, PendingFileGet>();
 
   constructor(
     private readonly config: ServerConfig,
@@ -158,7 +174,7 @@ export class AgentRelayBot {
       }
       if (this.store.pair(userId, code)) {
         await context.sendActivity(
-          "Paired. Use `!alias your prompt`, `/projects`, `/model`, `/ss`, or `/sshq`.",
+          "Paired. Use `!alias your prompt`, `!alias /get path`, `/projects`, `/model`, `/ss`, or `/sshq`.",
         );
         this.notifyWorkerPairing();
       } else {
@@ -318,6 +334,12 @@ export class AgentRelayBot {
       return;
     }
 
+    const getMatch = prompt.match(/^\/get(?:\s+([\s\S]+))?$/i);
+    if (getMatch) {
+      await this.handleFileGetCommand(context, userId, alias, (getMatch[1] ?? "").trim());
+      return;
+    }
+
     let files: TaskFile[] = [];
     if (hasFiles) {
       const downloaded = await downloadActivityFiles({
@@ -463,6 +485,197 @@ export class AgentRelayBot {
       latencyMs: Math.max(0, Date.now() - sentAt),
       projects: projects ?? [],
     });
+  }
+
+  private async handleFileGetCommand(
+    context: TurnContext,
+    userId: string,
+    alias: string,
+    relativePath: string,
+  ): Promise<void> {
+    if (!this.store.isPaired(userId)) {
+      await context.sendActivity("Not paired. Send `/pair <code>` first.");
+      return;
+    }
+    const worker = this.store.getWorker();
+    if (!worker) {
+      await context.sendActivity(
+        "Worker is offline. Start the AgentR tray on your PC.",
+      );
+      return;
+    }
+    if (worker.repos.length > 0 && !worker.repos.includes(alias)) {
+      await context.sendActivity(
+        `Unknown project \`${alias}\`. Known: ${worker.repos.map((r) => `\`!${r}\``).join(", ") || "(none)"}`,
+      );
+      return;
+    }
+    if (!relativePath) {
+      await context.sendActivity(
+        "Usage: `!alias /get path/to/file` — example: `!sample /get README.md`",
+      );
+      return;
+    }
+
+    const requestId = randomUUID();
+    const conversation = {
+      serviceUrl: context.activity.serviceUrl,
+      conversationId: context.activity.conversation.id,
+      activityId: context.activity.id,
+      tenantId: context.activity.conversation.tenantId,
+    };
+
+    const timer = setTimeout(() => {
+      const pending = this.pendingFileGets.get(requestId);
+      if (!pending) return;
+      this.pendingFileGets.delete(requestId);
+      void this.replyInConversation(
+        pending.conversation,
+        pending.rootActivityId,
+        `Timed out fetching \`${pending.relativePath}\` from \`!${pending.alias}\`.`,
+      );
+    }, 20_000);
+
+    this.pendingFileGets.set(requestId, {
+      alias,
+      relativePath,
+      conversation,
+      rootActivityId: context.activity.id,
+      timer,
+    });
+
+    const ok = this.hub.send({
+      type: "file.get",
+      requestId,
+      projectAlias: alias,
+      relativePath,
+    });
+    if (!ok) {
+      clearTimeout(timer);
+      this.pendingFileGets.delete(requestId);
+      await context.sendActivity(
+        "Worker disconnected — could not fetch the file.",
+      );
+      return;
+    }
+
+    const ack = MessageFactory.text(
+      `Fetching \`!${alias}\` \`${relativePath}\`…`,
+    );
+    if (context.activity.id) ack.replyToId = context.activity.id;
+    await context.sendActivity(ack);
+  }
+
+  async onFileResult(msg: FileResult): Promise<void> {
+    const pending = this.pendingFileGets.get(msg.requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingFileGets.delete(msg.requestId);
+
+    if (!msg.ok) {
+      await this.replyInConversation(
+        pending.conversation,
+        pending.rootActivityId,
+        `Could not fetch \`${pending.relativePath}\`: ${msg.error || "unknown error"}`,
+      );
+      return;
+    }
+
+    const sizeLabel = formatBytes(msg.sizeBytes);
+    const pathLabel = msg.relativePath || pending.relativePath;
+
+    if (msg.delivery === "inline" && msg.text != null) {
+      const isMarkdown = /\.md$/i.test(pathLabel);
+      const body = msg.truncated
+        ? `${msg.text}\n\n_(truncated — file exceeds inline size limit)_`
+        : msg.text;
+      const header = `**\`!${pending.alias}\`** \`${pathLabel}\` (${sizeLabel})`;
+      const text = isMarkdown
+        ? `${header}\n\n${body}`
+        : `${header}\n\n\`\`\`\n${body}\n\`\`\``;
+      await this.replyInConversation(
+        pending.conversation,
+        pending.rootActivityId,
+        text,
+      );
+      return;
+    }
+
+    if (msg.delivery === "download" && msg.dataBase64) {
+      const stored = this.artifacts.save({
+        taskId: msg.requestId,
+        name: msg.name || pathLabel.split("/").pop() || "file.bin",
+        mimeType: msg.mimeType || "application/octet-stream",
+        dataBase64: msg.dataBase64,
+        label: pathLabel,
+      });
+      if (!this.adapter) {
+        console.log(`[mock] file.get ${pathLabel} → ${stored.url}`);
+        return;
+      }
+      try {
+        const ref = {
+          conversation: { id: pending.conversation.conversationId },
+          serviceUrl: pending.conversation.serviceUrl,
+        };
+        await this.adapter.continueConversationAsync(
+          this.config.microsoftAppId,
+          ref as never,
+          async (ctx) => {
+            const card = MessageFactory.attachment(
+              CardFactory.adaptiveCard(
+                buildFileGetCard({
+                  alias: pending.alias,
+                  relativePath: pathLabel,
+                  sizeLabel,
+                  url: stored.url,
+                  mimeType: stored.mimeType,
+                }),
+              ),
+            );
+            if (pending.rootActivityId) card.replyToId = pending.rootActivityId;
+            await ctx.sendActivity(card);
+          },
+        );
+      } catch (err) {
+        console.error("[bot] file.get card failed", err);
+      }
+      return;
+    }
+
+    await this.replyInConversation(
+      pending.conversation,
+      pending.rootActivityId,
+      `Fetched \`${pathLabel}\` but had nothing to display.`,
+    );
+  }
+
+  private async replyInConversation(
+    conversation: PendingFileGet["conversation"],
+    rootActivityId: string | undefined,
+    text: string,
+  ): Promise<void> {
+    if (!this.adapter) {
+      console.log(`[mock] ${text}`);
+      return;
+    }
+    try {
+      const ref = {
+        conversation: { id: conversation.conversationId },
+        serviceUrl: conversation.serviceUrl,
+      };
+      await this.adapter.continueConversationAsync(
+        this.config.microsoftAppId,
+        ref as never,
+        async (ctx) => {
+          const activity = MessageFactory.text(text);
+          if (rootActivityId) activity.replyToId = rootActivityId;
+          await ctx.sendActivity(activity);
+        },
+      );
+    } catch (err) {
+      console.error("[bot] file.get reply failed", err);
+    }
   }
 
   private async handleModelCommand(

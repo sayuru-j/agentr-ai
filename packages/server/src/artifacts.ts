@@ -8,7 +8,7 @@ import {
   statSync,
   rmSync,
 } from "node:fs";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 export interface StoredArtifact {
@@ -23,6 +23,7 @@ export interface StoredArtifact {
 
 export class ArtifactStore {
   private readonly root: string;
+  private readonly mimeByKey = new Map<string, string>();
 
   constructor(
     private readonly publicBaseUrl: string,
@@ -40,12 +41,22 @@ export class ArtifactStore {
     label?: string;
   }): StoredArtifact {
     const safeTask = sanitize(opts.taskId);
-    const safeName = sanitizeFilename(opts.name) || `shot-${randomBytes(4).toString("hex")}.jpg`;
+    const safeName =
+      sanitizeFilename(opts.name) ||
+      `file-${randomBytes(4).toString("hex")}.bin`;
     const dir = join(this.root, safeTask);
     mkdirSync(dir, { recursive: true });
     const path = join(dir, safeName);
     const buf = Buffer.from(opts.dataBase64, "base64");
     writeFileSync(path, buf);
+
+    const mimeType = opts.mimeType || mimeFromName(safeName);
+    this.mimeByKey.set(`${safeTask}/${safeName}`, mimeType);
+    writeFileSync(
+      `${path}.meta.json`,
+      JSON.stringify({ mimeType }, null, 0),
+      "utf8",
+    );
 
     const token = createHash("sha256")
       .update(`${safeTask}:${safeName}:${buf.length}`)
@@ -57,7 +68,7 @@ export class ArtifactStore {
     return {
       taskId: opts.taskId,
       name: safeName,
-      mimeType: opts.mimeType || "image/jpeg",
+      mimeType,
       label: opts.label || safeName,
       url,
       path,
@@ -77,14 +88,30 @@ export class ArtifactStore {
     });
   }
 
-  read(taskId: string, name: string): { buffer: Buffer; mimeType: string } | null {
-    const path = join(this.root, sanitize(taskId), sanitizeFilename(name));
+  read(
+    taskId: string,
+    name: string,
+  ): { buffer: Buffer; mimeType: string; downloadName: string } | null {
+    const safeTask = sanitize(taskId);
+    const safeName = sanitizeFilename(name);
+    const path = join(this.root, safeTask, safeName);
     if (!existsSync(path)) return null;
     const buffer = readFileSync(path);
-    const mimeType = name.toLowerCase().endsWith(".png")
-      ? "image/png"
-      : "image/jpeg";
-    return { buffer, mimeType };
+    const key = `${safeTask}/${safeName}`;
+    let mimeType = this.mimeByKey.get(key);
+    if (!mimeType) {
+      try {
+        const meta = JSON.parse(readFileSync(`${path}.meta.json`, "utf8")) as {
+          mimeType?: string;
+        };
+        mimeType = meta.mimeType;
+      } catch {
+        /* fall through */
+      }
+    }
+    mimeType = mimeType || mimeFromName(safeName);
+    this.mimeByKey.set(key, mimeType);
+    return { buffer, mimeType, downloadName: safeName };
   }
 
   /** Drop artifact dirs older than maxAgeMs (default 24h). */
@@ -111,4 +138,22 @@ function sanitize(id: string): string {
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
+}
+
+function mimeFromName(name: string): string {
+  const ext = extname(name).toLowerCase();
+  const map: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".pdf": "application/pdf",
+    ".json": "application/json",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".zip": "application/zip",
+  };
+  return map[ext] || "application/octet-stream";
 }

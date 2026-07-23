@@ -15,6 +15,7 @@ import { preferResolvedAgentCommand } from "./resolve-agent.js";
 import { prepareForScreenshot } from "./display.js";
 import { projectPath, type ProjectEntry } from "./config.js";
 import { probeProjectDisks } from "./disk.js";
+import { readProjectFileForGet } from "./file-get.js";
 import { newApprovalId, TaskRunner } from "./runner.js";
 import { captureAllDisplays } from "./screenshot.js";
 import { uploadScreenshotsHttps } from "./upload.js";
@@ -406,6 +407,9 @@ export class AgentRelayWorker {
           msg.quality === "hq" ? "hq" : "preview",
         );
         break;
+      case "file.get":
+        this.handleFileGet(msg.requestId, msg.projectAlias, msg.relativePath);
+        break;
       case "task.approval_response": {
         const pending = this.pendingApprovals.get(msg.approvalId);
         if (pending) {
@@ -655,5 +659,72 @@ export class AgentRelayWorker {
     } finally {
       this.setStatus(this.ws ? "online" : "offline");
     }
+  }
+
+  private handleFileGet(
+    requestId: string,
+    projectAlias: string,
+    relativePath: string,
+  ): void {
+    const project = this.config.projects[projectAlias];
+    if (!project) {
+      this.send({
+        type: "file.result",
+        requestId,
+        ok: false,
+        error: `Unknown project \`${projectAlias}\``,
+      });
+      return;
+    }
+    const root = projectPath(project);
+    if (!root) {
+      this.send({
+        type: "file.result",
+        requestId,
+        ok: false,
+        error: "Project path is empty",
+      });
+      return;
+    }
+    const result = readProjectFileForGet(root, relativePath);
+    if (!result.ok) {
+      this.send({
+        type: "file.result",
+        requestId,
+        ok: false,
+        error: result.error,
+      });
+      return;
+    }
+    this.emit(
+      "log",
+      `file.get ${projectAlias}:${result.relativePath} (${result.delivery}, ${result.sizeBytes} B)`,
+    );
+    if (result.delivery === "inline") {
+      this.send({
+        type: "file.result",
+        requestId,
+        ok: true,
+        name: result.name,
+        relativePath: result.relativePath,
+        mimeType: result.mimeType,
+        sizeBytes: result.sizeBytes,
+        delivery: "inline",
+        text: result.text,
+        truncated: result.truncated,
+      });
+      return;
+    }
+    this.send({
+      type: "file.result",
+      requestId,
+      ok: true,
+      name: result.name,
+      relativePath: result.relativePath,
+      mimeType: result.mimeType,
+      sizeBytes: result.sizeBytes,
+      delivery: "download",
+      dataBase64: result.dataBase64,
+    });
   }
 }

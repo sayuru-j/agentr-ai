@@ -14,6 +14,8 @@ Authorization: Bearer <WORKER_TOKEN>
 | `worker.pong` | W→S | round-trip reply + optional per-project disk free/total |
 | `worker.set_config` | S→W | set `agentModel` (persisted on PC) |
 | `worker.config` | W→S | confirm current `agentModel` |
+| `file.get` | S→W | read a project-relative file (`!alias /get path`) |
+| `file.result` | W→S | inline text or base64 download (≤1.5 MB; path sandbox) |
 | `task.create` | S→W | prompt + project alias + optional `files` / `agentModel` |
 | `task.log` | W→S | stdout/stderr chunks |
 | `task.approval_request` | W→S | risky command |

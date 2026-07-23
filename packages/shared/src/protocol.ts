@@ -152,6 +152,32 @@ export const WorkerPongSchema = z.object({
 });
 export type WorkerPong = z.infer<typeof WorkerPongSchema>;
 
+/** Server → Worker: read a project file for Teams. */
+export const FileGetSchema = z.object({
+  type: z.literal("file.get"),
+  requestId: z.string(),
+  projectAlias: z.string().min(1),
+  relativePath: z.string().min(1).max(500),
+});
+export type FileGet = z.infer<typeof FileGetSchema>;
+
+/** Worker → Server: file.get result (inline text or base64 download). */
+export const FileResultSchema = z.object({
+  type: z.literal("file.result"),
+  requestId: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  name: z.string().optional(),
+  relativePath: z.string().optional(),
+  mimeType: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  delivery: z.enum(["inline", "download"]).optional(),
+  text: z.string().optional(),
+  truncated: z.boolean().optional(),
+  dataBase64: z.string().optional(),
+});
+export type FileResult = z.infer<typeof FileResultSchema>;
+
 /** Server → Worker: cancel a running task */
 export const TaskCancelSchema = z.object({
   type: z.literal("task.cancel"),
@@ -176,6 +202,7 @@ export const ServerToWorkerSchema = z.discriminatedUnion("type", [
   TaskCancelSchema,
   WorkerSetConfigSchema,
   WorkerPingSchema,
+  FileGetSchema,
   ServerAckSchema,
 ]);
 export type ServerToWorker = z.infer<typeof ServerToWorkerSchema>;
@@ -188,6 +215,7 @@ export const WorkerToServerSchema = z.discriminatedUnion("type", [
   TaskArtifactSchema,
   WorkerConfigSchema,
   WorkerPongSchema,
+  FileResultSchema,
 ]);
 export type WorkerToServer = z.infer<typeof WorkerToServerSchema>;
 

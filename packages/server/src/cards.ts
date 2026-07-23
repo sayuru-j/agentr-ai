@@ -187,6 +187,10 @@ export function buildHelpCard() {
           { title: "/model", value: "`/model` or `/model <name>` (e.g. `auto`)" },
           { title: "/ss", value: "Preview screenshots (all monitors)" },
           { title: "/sshq", value: "High-quality screenshots (all monitors)" },
+          {
+            title: "/get",
+            value: "`!alias /get path` — fetch a project file (≤1.5 MB)",
+          },
           { title: "/cancel", value: "Cancel the running or queued agent task" },
           { title: "/help", value: "This help card" },
           {
@@ -194,6 +198,44 @@ export function buildHelpCard() {
             value: "`!alias your prompt` — attach files to drop into the project",
           },
         ],
+      },
+    ],
+  };
+}
+
+export function buildFileGetCard(opts: {
+  alias: string;
+  relativePath: string;
+  sizeLabel: string;
+  url: string;
+  mimeType: string;
+}) {
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "Project file",
+        weight: "Bolder",
+        size: "Medium",
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "Project", value: `!${opts.alias}` },
+          { title: "Path", value: opts.relativePath },
+          { title: "Size", value: opts.sizeLabel },
+          { title: "Type", value: opts.mimeType },
+        ],
+      },
+    ],
+    actions: [
+      {
+        type: "Action.OpenUrl",
+        title: "Download",
+        url: opts.url,
       },
     ],
   };

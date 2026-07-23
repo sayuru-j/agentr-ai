@@ -25,3 +25,9 @@ export {
   type DisplayState,
 } from "./display.js";
 export { probeProjectDisks, formatBytes } from "./disk.js";
+export {
+  readProjectFileForGet,
+  resolveSafeProjectPath,
+  FILE_GET_MAX_BYTES,
+  FILE_GET_INLINE_CHARS,
+} from "./file-get.js";

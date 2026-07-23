@@ -75,7 +75,8 @@ export class WorkerHub {
           msg.type === "task.log" ||
           msg.type === "task.approval_request" ||
           msg.type === "task.status" ||
-          msg.type === "task.artifact"
+          msg.type === "task.artifact" ||
+          msg.type === "file.result"
         ) {
           this.onMessage?.(msg, socket);
         }

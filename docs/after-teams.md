@@ -47,12 +47,20 @@ Shows PC hostname, aliases, **latency**, **last task**, and **project disk free 
 ## E — First task
 
 ```
-[frontend] List the files in the project root
+!frontend List the files in the project root
 ```
 
-- `[frontend]` must match a project alias
+- `!frontend` must match a project alias
 - Adaptive Card shows live logs
 - Approve / Reject if a risky command appears
+
+Fetch a file without running the agent:
+
+```
+!frontend /get README.md
+```
+
+Small text is pasted into Teams; larger/binary files get a download link (max ~1.5 MB; path must stay inside the project).
 
 ## Checklist
 

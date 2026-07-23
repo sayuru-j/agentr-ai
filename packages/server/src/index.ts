@@ -50,6 +50,9 @@ async function main(): Promise<void> {
       case "worker.pong":
         bot.onWorkerPong(msg.requestId, msg.sentAt, msg.projects);
         break;
+      case "file.result":
+        bot.onFileResult(msg);
+        break;
       case "task.log":
         void bot.onTaskLog(msg.taskId, msg.chunk);
         break;
@@ -108,6 +111,13 @@ async function main(): Promise<void> {
     }
     res.setHeader("Content-Type", file.mimeType);
     res.setHeader("Cache-Control", "public, max-age=3600");
+    const isImage = file.mimeType.startsWith("image/");
+    if (!isImage) {
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${file.downloadName.replace(/"/g, "")}"`,
+      );
+    }
     res.send(file.buffer);
   };
 
