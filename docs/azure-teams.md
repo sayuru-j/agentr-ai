@@ -48,6 +48,17 @@ az bot msteams show -n AgentR -g <resource-group>
 
 If you regenerate the zip after changing App ID or icons, remove the old app and upload again (manifest version bumps help). Redeploy/restart the relay so `/api/agentr-teams.zip` serves the new file.
 
+On the VM, rebuild anytime assets change:
+
+```bash
+npm run cli:status
+# → “Rebuild Teams app zip”
+# or:
+npm run cli:status -- --action rebuild-teams-zip
+```
+
+That rewrites `/etc/agent-relay/agentr-teams.zip`, bumps the Teams manifest patch version, and prints the download URL.
+
 ### scp example (Windows PowerShell)
 
 ```powershell

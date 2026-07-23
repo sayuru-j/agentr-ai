@@ -1,8 +1,10 @@
 import archiver from "archiver";
-import { createWriteStream, existsSync, readFileSync, mkdirSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Jimp } from "jimp";
+
+export const DEFAULT_TEAMS_APP_VERSION = "1.0.2";
 
 export async function buildTeamsAppZip(opts: {
   outPath: string;
@@ -10,16 +12,21 @@ export async function buildTeamsAppZip(opts: {
   botDomain: string;
   templatesDir: string;
   logoPath?: string;
-}): Promise<void> {
+  /** Semver written into manifest.json (Teams needs a bump to refresh icons). */
+  version?: string;
+}): Promise<{ version: string; logoPath: string | null }> {
   mkdirSync(dirname(opts.outPath), { recursive: true });
 
+  const version = (opts.version ?? DEFAULT_TEAMS_APP_VERSION).trim() || DEFAULT_TEAMS_APP_VERSION;
   const manifestTemplate = loadManifestTemplate(opts.templatesDir);
   const manifest = manifestTemplate
     .replaceAll("{{APP_ID}}", opts.appId)
     .replaceAll("{{BOT_DOMAIN}}", opts.botDomain)
-    .replaceAll("{{BOT_ENDPOINT}}", `https://${opts.botDomain}/api/messages`);
+    .replaceAll("{{BOT_ENDPOINT}}", `https://${opts.botDomain}/api/messages`)
+    .replaceAll("{{APP_VERSION}}", version);
 
   const logoPath = opts.logoPath ?? resolveDefaultLogoPath();
+  const resolvedLogo = existsSync(logoPath) ? logoPath : null;
   const { colorPng, outlinePng } = await loadIcons(logoPath, opts.templatesDir);
 
   await new Promise<void>((resolve, reject) => {
@@ -33,6 +40,28 @@ export async function buildTeamsAppZip(opts: {
     archive.append(outlinePng, { name: "outline.png" });
     void archive.finalize();
   });
+
+  return { version, logoPath: resolvedLogo };
+}
+
+/** Bump patch: 1.0.2 → 1.0.3 */
+export function bumpTeamsAppVersion(version: string): string {
+  const parts = version.trim().split(".");
+  while (parts.length < 3) parts.push("0");
+  const patch = Number.parseInt(parts[2] ?? "0", 10);
+  parts[2] = String(Number.isFinite(patch) ? patch + 1 : 1);
+  return parts.slice(0, 3).join(".");
+}
+
+export function readTeamsAppVersionFile(path: string): string | null {
+  if (!existsSync(path)) return null;
+  const v = readFileSync(path, "utf8").trim();
+  return v || null;
+}
+
+export function writeTeamsAppVersionFile(path: string, version: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${version}\n`, "utf8");
 }
 
 function resolveDefaultLogoPath(): string {

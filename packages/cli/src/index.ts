@@ -42,7 +42,7 @@ program
   .option("--no-menu", "Print status only (no action menu)", false)
   .option(
     "--action <name>",
-    "Run one action: reload-caddy|restart-caddy|restart-relay|restart-all|sync-caddyfile|logs-relay|logs-caddy|health|show-pair|show-token|rotate-token|install-services|refresh",
+    "Run one action: reload-caddy|restart-caddy|restart-relay|restart-all|sync-caddyfile|rebuild-teams-zip|logs-relay|logs-caddy|health|show-pair|show-token|rotate-token|install-services|refresh",
   )
   .action(async (opts) => {
     await runStatus({

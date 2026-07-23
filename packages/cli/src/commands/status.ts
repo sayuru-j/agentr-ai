@@ -1,10 +1,20 @@
 import { existsSync, readFileSync, statSync, copyFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import pc from "picocolors";
 import { execSync, spawnSync } from "node:child_process";
 import * as p from "@clack/prompts";
 import { readEnvFile } from "./setup.js";
 import { runTokenRotate } from "./token.js";
+import {
+  buildTeamsAppZip,
+  bumpTeamsAppVersion,
+  DEFAULT_TEAMS_APP_VERSION,
+  readTeamsAppVersionFile,
+  writeTeamsAppVersionFile,
+} from "../templates/teams-zip.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 interface HealthPayload {
   ok?: boolean;
@@ -21,6 +31,7 @@ export type StatusAction =
   | "restart-relay"
   | "restart-all"
   | "sync-caddyfile"
+  | "rebuild-teams-zip"
   | "logs-relay"
   | "logs-caddy"
   | "show-token"
@@ -195,6 +206,7 @@ interface StatusContext {
   env: Record<string, string>;
   domain: string;
   zip: string;
+  versionFile: string;
   httpPort: string;
   dryRun: boolean;
 }
@@ -212,6 +224,7 @@ function resolveContext(opts: StatusOptions): StatusContext {
     env,
     domain: env.RELAY_DOMAIN ?? "",
     zip: join(base, "agentr-teams.zip"),
+    versionFile: join(base, "teams-app.version"),
     httpPort: env.HTTP_PORT ?? "3000",
     dryRun: Boolean(opts.dryRun) || process.platform === "win32",
   };
@@ -276,6 +289,12 @@ async function printReport(ctx: StatusContext): Promise<{
 
   section("Artifacts");
   line("Teams zip", fileInfo(zip) + (existsSync(zip) ? pc.dim(`  ${zip}`) : ""));
+  const storedVersion = readTeamsAppVersionFile(ctx.versionFile);
+  if (storedVersion) {
+    line("App version", pc.bold(storedVersion));
+  } else if (existsSync(zip)) {
+    line("App version", pc.dim("unknown — rebuild to set"));
+  }
   if (existsSync(zip) && domain) {
     line("Download", pc.bold(`https://${domain}/api/agentr-teams.zip`));
   } else if (existsSync(zip)) {
@@ -448,6 +467,53 @@ async function runAction(
       return "continue";
     }
 
+    case "rebuild-teams-zip": {
+      const appId = (ctx.env.MICROSOFT_APP_ID ?? "").trim();
+      const domain = (ctx.domain ?? "").trim();
+      if (!appId) {
+        p.log.error("MICROSOFT_APP_ID missing in config.env — run setup first");
+        return "continue";
+      }
+      if (!domain) {
+        p.log.error("RELAY_DOMAIN missing in config.env — run setup first");
+        return "continue";
+      }
+      const prev =
+        readTeamsAppVersionFile(ctx.versionFile) ?? DEFAULT_TEAMS_APP_VERSION;
+      const next = bumpTeamsAppVersion(prev);
+      try {
+        const spinner = p.spinner();
+        spinner.start(`Building agentr-teams.zip (v${next})…`);
+        const built = await buildTeamsAppZip({
+          outPath: ctx.zip,
+          appId,
+          botDomain: domain,
+          templatesDir: join(__dirname, "..", "templates", "teams"),
+          version: next,
+        });
+        writeTeamsAppVersionFile(ctx.versionFile, built.version);
+        spinner.stop(`Wrote ${ctx.zip}`);
+        const download = domain
+          ? `https://${domain}/api/agentr-teams.zip`
+          : `http://127.0.0.1:${ctx.httpPort}/api/agentr-teams.zip`;
+        p.note(
+          [
+            `Version:  ${built.version} (was ${prev})`,
+            `Logo:     ${built.logoPath ?? "fallback template icons"}`,
+            `Zip:      ${ctx.zip}`,
+            `Download: ${download}`,
+            "",
+            "In Teams: remove the old app (or update), then upload this zip again.",
+            "Icon changes need a higher manifest version — already bumped.",
+          ].join("\n"),
+          "Teams app rebuilt",
+        );
+      } catch (err) {
+        p.log.error(String(err instanceof Error ? err.message : err));
+      }
+      return "continue";
+    }
+
     case "logs-relay":
       showLogs("agent-relay-server");
       return "continue";
@@ -539,6 +605,11 @@ async function promptAction(): Promise<StatusAction | symbol> {
       {
         value: "sync-caddyfile",
         label: "Sync Caddyfile → /etc/caddy + reload",
+      },
+      {
+        value: "rebuild-teams-zip",
+        label: "Rebuild Teams app zip",
+        hint: "icons / logo → bump version + download link",
       },
       { value: "logs-relay", label: "Show relay logs", hint: "last 40 lines" },
       { value: "logs-caddy", label: "Show Caddy logs", hint: "last 40 lines" },

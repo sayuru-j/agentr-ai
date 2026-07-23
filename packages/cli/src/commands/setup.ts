@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import pc from "picocolors";
 import { ensureDependencies, resolveNodeBinary, NVM_VERSION, NODE_VERSION } from "../deps.js";
-import { buildTeamsAppZip } from "../templates/teams-zip.js";
+import {
+  buildTeamsAppZip,
+  writeTeamsAppVersionFile,
+} from "../templates/teams-zip.js";
 import {
   renderCaddyfile,
   renderSystemdUnit,
@@ -135,12 +138,14 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
   );
 
   const zipPath = join(base, "agentr-teams.zip");
-  await buildTeamsAppZip({
+  const versionPath = join(base, "teams-app.version");
+  const built = await buildTeamsAppZip({
     outPath: zipPath,
     appId: String(appId),
     botDomain: String(domain),
     templatesDir: join(__dirname, "..", "templates", "teams"),
   });
+  writeTeamsAppVersionFile(versionPath, built.version);
 
   // Also copy a helper install script for Linux
   writeFileSync(
@@ -238,7 +243,7 @@ echo "Health: curl -sS https://\$(grep RELAY_DOMAIN /etc/agent-relay/config.env 
       `Config:      ${envPath}`,
       `Caddyfile:   ${join(base, "caddy", "Caddyfile")}`,
       `Systemd:     ${join(base, "systemd", "agent-relay-server.service")}`,
-      `Teams zip:   ${zipPath}`,
+      `Teams zip:   ${zipPath} (v${built.version})`,
       `Worker token written to config.env (save it for the tray app)`,
       installDry
         ? "Dry-run / Windows: copy install-services.sh to your Linux VM and run it."
