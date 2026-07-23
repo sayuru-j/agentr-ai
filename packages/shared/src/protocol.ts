@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const TaskStatusSchema = z.enum([
+  "queued",
   "running",
   "succeeded",
   "failed",
@@ -16,6 +17,14 @@ export const ConversationRefSchema = z.object({
 });
 export type ConversationRef = z.infer<typeof ConversationRefSchema>;
 
+export const TaskFileSchema = z.object({
+  name: z.string().min(1).max(200),
+  /** raw base64 (no data: prefix) */
+  dataBase64: z.string().min(1),
+  mimeType: z.string().optional(),
+});
+export type TaskFile = z.infer<typeof TaskFileSchema>;
+
 /** Worker → Server: announce identity after connect */
 export const WorkerHelloSchema = z.object({
   type: z.literal("worker.hello"),
@@ -23,6 +32,7 @@ export const WorkerHelloSchema = z.object({
   version: z.string(),
   repos: z.array(z.string()),
   pairingCode: z.string().optional(),
+  agentModel: z.string().optional(),
 });
 export type WorkerHello = z.infer<typeof WorkerHelloSchema>;
 
@@ -34,6 +44,10 @@ export const TaskCreateSchema = z.object({
   threadId: z.string(),
   projectAlias: z.string().optional(),
   conversation: ConversationRefSchema,
+  /** Optional files to write into the project before the agent runs. */
+  files: z.array(TaskFileSchema).max(8).optional(),
+  /** Per-task model override (otherwise worker config). */
+  agentModel: z.string().optional(),
 });
 export type TaskCreate = z.infer<typeof TaskCreateSchema>;
 
@@ -44,6 +58,13 @@ export const ScreenshotCaptureSchema = z.object({
   quality: z.enum(["preview", "hq"]),
 });
 export type ScreenshotCapture = z.infer<typeof ScreenshotCaptureSchema>;
+
+/** Server → Worker: update worker settings (e.g. model). */
+export const WorkerSetConfigSchema = z.object({
+  type: z.literal("worker.set_config"),
+  agentModel: z.string().min(1).optional(),
+});
+export type WorkerSetConfig = z.infer<typeof WorkerSetConfigSchema>;
 
 /** Worker → Server: streamed log chunk */
 export const TaskLogSchema = z.object({
@@ -81,6 +102,7 @@ export const TaskStatusMessageSchema = z.object({
   status: TaskStatusSchema,
   message: z.string().optional(),
   exitCode: z.number().optional(),
+  queuePosition: z.number().int().positive().optional(),
 });
 export type TaskStatusMessage = z.infer<typeof TaskStatusMessageSchema>;
 
@@ -96,6 +118,13 @@ export const TaskArtifactSchema = z.object({
   label: z.string().optional(),
 });
 export type TaskArtifact = z.infer<typeof TaskArtifactSchema>;
+
+/** Worker → Server: confirm config after set_config / hello refresh */
+export const WorkerConfigSchema = z.object({
+  type: z.literal("worker.config"),
+  agentModel: z.string(),
+});
+export type WorkerConfigMessage = z.infer<typeof WorkerConfigSchema>;
 
 /** Server → Worker: cancel a running task */
 export const TaskCancelSchema = z.object({
@@ -119,6 +148,7 @@ export const ServerToWorkerSchema = z.discriminatedUnion("type", [
   ScreenshotCaptureSchema,
   TaskApprovalResponseSchema,
   TaskCancelSchema,
+  WorkerSetConfigSchema,
   ServerAckSchema,
 ]);
 export type ServerToWorker = z.infer<typeof ServerToWorkerSchema>;
@@ -129,6 +159,7 @@ export const WorkerToServerSchema = z.discriminatedUnion("type", [
   TaskApprovalRequestSchema,
   TaskStatusMessageSchema,
   TaskArtifactSchema,
+  WorkerConfigSchema,
 ]);
 export type WorkerToServer = z.infer<typeof WorkerToServerSchema>;
 

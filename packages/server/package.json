@@ -16,6 +16,7 @@
   "dependencies": {
     "@agentr/shared": "*",
     "botbuilder": "^4.23.1",
+    "botframework-connector": "^4.23.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "ws": "^8.18.0"

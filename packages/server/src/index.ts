@@ -41,7 +41,11 @@ async function main(): Promise<void> {
           msg.repos,
           socket,
           msg.pairingCode,
+          msg.agentModel,
         );
+        break;
+      case "worker.config":
+        bot.onWorkerConfig(msg.agentModel);
         break;
       case "task.log":
         void bot.onTaskLog(msg.taskId, msg.chunk);
@@ -58,7 +62,13 @@ async function main(): Promise<void> {
         );
         break;
       case "task.status":
-        void bot.onTaskStatus(msg.taskId, msg.status, msg.message);
+        void bot.onTaskStatus(
+          msg.taskId,
+          msg.status,
+          msg.message,
+          msg.exitCode,
+          msg.queuePosition,
+        );
         break;
     }
   });

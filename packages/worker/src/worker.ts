@@ -3,11 +3,14 @@ import {
   PROTOCOL_VERSION,
   safeParseRelayMessage,
   type ServerToWorker,
+  type TaskFile,
   type WorkerToServer,
 } from "@agentr/shared";
 import { hostname as osHostname } from "node:os";
 import WebSocket from "ws";
 import type { WorkerConfig } from "./config.js";
+import { saveWorkerConfig } from "./config.js";
+import { writeTaskInboxFiles } from "./inbox.js";
 import { preferResolvedAgentCommand } from "./resolve-agent.js";
 import { newApprovalId, TaskRunner } from "./runner.js";
 import { captureAllDisplays } from "./screenshot.js";
@@ -44,6 +47,14 @@ type PendingApproval = {
   resolve: (approved: boolean) => void;
 };
 
+type QueuedTask = {
+  taskId: string;
+  prompt: string;
+  projectAlias?: string;
+  files?: TaskFile[];
+  agentModel?: string;
+};
+
 export class AgentRelayWorker {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -54,6 +65,8 @@ export class AgentRelayWorker {
   private pairedUsers = 0;
   private runners = new Map<string, TaskRunner>();
   private pendingApprovals = new Map<string, PendingApproval>();
+  private taskQueue: QueuedTask[] = [];
+  private draining = false;
   private backoffMs = 1000;
   private listeners: {
     [K in keyof WorkerEvents]?: Set<WorkerEvents[K]>;
@@ -108,6 +121,7 @@ export class AgentRelayWorker {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     for (const runner of this.runners.values()) runner.cancel();
     this.runners.clear();
+    this.taskQueue = [];
     this.ws?.close();
     this.ws = null;
     this.setStatus("offline");
@@ -173,6 +187,7 @@ export class AgentRelayWorker {
         version: PROTOCOL_VERSION,
         repos: Object.keys(this.config.projects),
         pairingCode: this.pairingCode,
+        agentModel: this.config.agentModel || "auto",
       });
     });
 
@@ -240,7 +255,31 @@ export class AgentRelayWorker {
         this.emit("log", `Server ack: ${msg.message}`);
         break;
       case "task.create":
-        await this.runTask(msg.taskId, msg.prompt, msg.projectAlias);
+        this.enqueueTask({
+          taskId: msg.taskId,
+          prompt: msg.prompt,
+          projectAlias: msg.projectAlias,
+          files: msg.files,
+          agentModel: msg.agentModel,
+        });
+        break;
+      case "worker.set_config":
+        if (msg.agentModel?.trim()) {
+          this.config.agentModel = msg.agentModel.trim();
+          try {
+            saveWorkerConfig(this.config);
+          } catch (err) {
+            this.emit(
+              "error",
+              err instanceof Error ? err : new Error(String(err)),
+            );
+          }
+          this.send({
+            type: "worker.config",
+            agentModel: this.config.agentModel,
+          });
+          this.emit("log", `Model set to ${this.config.agentModel}`);
+        }
         break;
       case "screenshot.capture":
         await this.handleScreenshotCapture(
@@ -257,6 +296,18 @@ export class AgentRelayWorker {
         break;
       }
       case "task.cancel": {
+        const qi = this.taskQueue.findIndex((t) => t.taskId === msg.taskId);
+        if (qi >= 0) {
+          this.taskQueue.splice(qi, 1);
+          this.send({
+            type: "task.status",
+            taskId: msg.taskId,
+            status: "cancelled",
+            message: "Cancelled while queued",
+          });
+          this.reannounceQueue();
+          break;
+        }
         const runner = this.runners.get(msg.taskId);
         if (runner) {
           runner.cancel();
@@ -272,6 +323,54 @@ export class AgentRelayWorker {
     }
   }
 
+  private enqueueTask(task: QueuedTask): void {
+    this.taskQueue.push(task);
+    const busy = this.draining || this.runners.size > 0;
+    if (busy) {
+      this.send({
+        type: "task.status",
+        taskId: task.taskId,
+        status: "queued",
+        message: `Queued (#${this.taskQueue.length})`,
+        queuePosition: this.taskQueue.length,
+      });
+      this.setStatus("busy");
+    }
+    void this.drainQueue();
+  }
+
+  private reannounceQueue(): void {
+    this.taskQueue.forEach((t, i) => {
+      this.send({
+        type: "task.status",
+        taskId: t.taskId,
+        status: "queued",
+        message: `Queued (#${i + 1})`,
+        queuePosition: i + 1,
+      });
+    });
+  }
+
+  private async drainQueue(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      while (this.taskQueue.length > 0 && !this.stopped) {
+        const next = this.taskQueue.shift();
+        if (!next) break;
+        this.reannounceQueue();
+        await this.runTask(next);
+      }
+    } finally {
+      this.draining = false;
+      if (this.taskQueue.length > 0 && !this.stopped) {
+        void this.drainQueue();
+      } else if (this.ws && this.runners.size === 0) {
+        this.setStatus("online");
+      }
+    }
+  }
+
   private resolveCwd(projectAlias?: string): string | null {
     if (!projectAlias) {
       const first = Object.values(this.config.projects)[0];
@@ -282,11 +381,9 @@ export class AgentRelayWorker {
     return path;
   }
 
-  private async runTask(
-    taskId: string,
-    prompt: string,
-    projectAlias?: string,
-  ): Promise<void> {
+  private async runTask(task: QueuedTask): Promise<void> {
+    const { taskId, projectAlias, files, agentModel } = task;
+    let { prompt } = task;
     const cwd = this.resolveCwd(projectAlias);
     if (!cwd) {
       this.send({
@@ -296,6 +393,23 @@ export class AgentRelayWorker {
         message: `Unknown project alias: ${projectAlias}`,
       });
       return;
+    }
+
+    if (files && files.length > 0) {
+      try {
+        const { dir, paths } = writeTaskInboxFiles(cwd, files);
+        const names = paths.map((p) => p.slice(dir.length + 1));
+        prompt = `Files saved under \`.agentr-inbox/\`:\n${names.map((n) => `- ${n}`).join("\n")}\n\n${prompt}`;
+        this.emit("log", `Wrote ${paths.length} file(s) → ${dir}`);
+      } catch (err) {
+        this.send({
+          type: "task.status",
+          taskId,
+          status: "failed",
+          message: `Failed to save attachments: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        return;
+      }
     }
 
     this.setStatus("busy");
@@ -310,7 +424,7 @@ export class AgentRelayWorker {
       prompt,
       cwd,
       agentCommand: preferResolvedAgentCommand(this.config.agentCommand),
-      agentModel: this.config.agentModel,
+      agentModel: (agentModel || this.config.agentModel || "auto").trim() || "auto",
       dryRun: this.config.dryRun,
       onLog: (stream, chunk) => {
         this.emit("taskLog", { taskId, stream, chunk });
@@ -344,13 +458,17 @@ export class AgentRelayWorker {
     });
 
     this.runners.delete(taskId);
-    this.setStatus(this.ws ? "online" : "offline");
     this.emit("taskEnd", { taskId, exitCode: exitCode ?? 1 });
 
     this.send({
       type: "task.status",
       taskId,
-      status: exitCode === 0 ? "succeeded" : exitCode === 130 ? "cancelled" : "failed",
+      status:
+        exitCode === 0
+          ? "succeeded"
+          : exitCode === 130
+            ? "cancelled"
+            : "failed",
       exitCode: exitCode ?? 1,
       message:
         exitCode === 0
@@ -359,6 +477,10 @@ export class AgentRelayWorker {
             ? "Cancelled"
             : `Exited with code ${exitCode}`,
     });
+
+    if (this.ws && this.taskQueue.length === 0 && this.runners.size === 0) {
+      this.setStatus("online");
+    }
   }
 
   private async handleScreenshotCapture(

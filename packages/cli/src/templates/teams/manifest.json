@@ -46,6 +46,14 @@
               "description": "Show worker connection status"
             },
             {
+              "title": "last",
+              "description": "Show the last agent task in this chat"
+            },
+            {
+              "title": "model",
+              "description": "Show or set Cursor model: /model auto"
+            },
+            {
               "title": "help",
               "description": "Show AgentR help"
             }

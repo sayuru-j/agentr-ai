@@ -60,15 +60,15 @@ export function matchRiskCommand(
   return null;
 }
 
-/** Parse `!alias prompt` from a Teams message. */
+/** Parse `!alias prompt` from a Teams message (prompt may be empty for file-only). */
 export function parseProjectAlias(text: string): {
   alias?: string;
   prompt: string;
 } {
-  const bang = text.match(/^\s*!([A-Za-z0-9_-]+)\s+([\s\S]*)$/);
-  if (bang) return { alias: bang[1]!.trim(), prompt: bang[2]!.trim() };
+  const bang = text.match(/^\s*!([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/);
+  if (bang) return { alias: bang[1]!.trim(), prompt: (bang[2] ?? "").trim() };
   return { prompt: text.trim() };
 }
 
-export const PROTOCOL_VERSION = "0.1.0";
+export const PROTOCOL_VERSION = "0.2.0";
 export const WS_PATH = "/ws";

@@ -17,7 +17,10 @@ Type in Teams → a small cloud VM relays over WebSockets → your workstation r
 | In Teams | What it does |
 |----------|----------------|
 | `/pair <code>` | Link this chat to your PC |
-| `!alias your prompt` | Run Cursor agent in that project |
+| `!alias your prompt` | Run Cursor agent in that project (attach files to drop into `.agentr-inbox/`) |
+| `/projects` | List project aliases |
+| `/last` | Last task prompt / exit / short log |
+| `/model` · `/model auto` | Show or set the agent model |
 | `/ss` | Preview screenshots (all monitors) |
 | `/sshq` | High-quality screenshots |
 | `/help` | Full command list |

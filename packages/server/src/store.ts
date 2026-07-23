@@ -26,7 +26,13 @@ export interface TaskRecord {
   logs: string[];
   artifacts: TaskArtifactMeta[];
   createdAt: number;
+  /** Adaptive Card activity id (updated in place). */
   activityId?: string;
+  /** User message that started the task (thread root). */
+  rootActivityId?: string;
+  exitCode?: number;
+  /** How many log characters already posted as thread replies. */
+  flushedLogChars?: number;
 }
 
 export interface WorkerConnection {
@@ -35,6 +41,7 @@ export interface WorkerConnection {
   version: string;
   repos: string[];
   connectedAt: number;
+  agentModel?: string;
 }
 
 interface PersistedSession {
@@ -50,6 +57,8 @@ export class SessionStore {
   pendingApprovals = new Map<string, string>();
   /** conversationId → latest agent taskId (for /cancel) */
   activeTaskByConversation = new Map<string, string>();
+  /** conversationId → last finished agent task (for /last) */
+  lastTaskByConversation = new Map<string, string>();
 
   constructor(private readonly persistPath?: string) {
     this.load();
@@ -102,14 +111,17 @@ export class SessionStore {
   }
 
   createTask(
-    partial: Omit<TaskRecord, "status" | "logs" | "artifacts" | "createdAt">,
+    partial: Omit<TaskRecord, "status" | "logs" | "artifacts" | "createdAt"> & {
+      status?: TaskStatus;
+    },
   ): TaskRecord {
     const record: TaskRecord = {
       ...partial,
-      status: "running",
+      status: partial.status ?? "running",
       logs: [],
       artifacts: [],
       createdAt: Date.now(),
+      flushedLogChars: 0,
     };
     this.tasks.set(record.taskId, record);
     // Track agent tasks for /cancel (not screenshot-only requests).
@@ -123,15 +135,34 @@ export class SessionStore {
     const id = this.activeTaskByConversation.get(conversationId);
     if (id) {
       const task = this.tasks.get(id);
-      if (task?.status === "running") return task;
+      if (task?.status === "running" || task?.status === "queued") return task;
     }
-    // Fallback: latest running task in this conversation
     let latest: TaskRecord | undefined;
     for (const task of this.tasks.values()) {
       if (
         task.threadId === conversationId &&
-        task.status === "running" &&
+        (task.status === "running" || task.status === "queued") &&
         task.prompt !== "Desktop screenshots"
+      ) {
+        if (!latest || task.createdAt > latest.createdAt) latest = task;
+      }
+    }
+    return latest;
+  }
+
+  getLastTaskForConversation(conversationId: string): TaskRecord | undefined {
+    const id = this.lastTaskByConversation.get(conversationId);
+    if (id) {
+      const task = this.tasks.get(id);
+      if (task) return task;
+    }
+    let latest: TaskRecord | undefined;
+    for (const task of this.tasks.values()) {
+      if (
+        task.threadId === conversationId &&
+        task.prompt !== "Desktop screenshots" &&
+        task.status !== "running" &&
+        task.status !== "queued"
       ) {
         if (!latest || task.createdAt > latest.createdAt) latest = task;
       }
@@ -150,20 +181,28 @@ export class SessionStore {
     const task = this.tasks.get(taskId);
     if (!task) return undefined;
     task.logs.push(chunk);
-    if (task.logs.length > 200) {
-      task.logs.splice(0, task.logs.length - 200);
+    if (task.logs.length > 400) {
+      task.logs.splice(0, task.logs.length - 400);
     }
     return task;
   }
 
-  setStatus(taskId: string, status: TaskStatus): TaskRecord | undefined {
+  setStatus(
+    taskId: string,
+    status: TaskStatus,
+    exitCode?: number,
+  ): TaskRecord | undefined {
     const task = this.tasks.get(taskId);
     if (!task) return undefined;
     task.status = status;
-    if (status !== "running") {
+    if (typeof exitCode === "number") task.exitCode = exitCode;
+    if (status !== "running" && status !== "queued") {
       const active = this.activeTaskByConversation.get(task.threadId);
       if (active === taskId) {
         this.activeTaskByConversation.delete(task.threadId);
+      }
+      if (task.prompt !== "Desktop screenshots") {
+        this.lastTaskByConversation.set(task.threadId, taskId);
       }
     }
     return task;
@@ -192,7 +231,7 @@ export class SessionStore {
       const data: PersistedSession = {
         pairedUserIds: [...this.pairedUserIds],
       };
-      writeFileSync(this.persistPath, JSON.stringify(data, null, 2) + "\n", "utf8");
+      writeFileSync(this.persistPath, JSON.stringify(data, null, 2) + "\n");
     } catch (err) {
       console.warn("[store] failed to save session persistence", err);
     }

@@ -1,6 +1,8 @@
 import {
   parseProjectAlias,
   type TaskApprovalResponse,
+  type TaskFile,
+  type TaskStatus,
 } from "@agentr/shared";
 import {
   CardFactory,
@@ -12,7 +14,15 @@ import {
   type Activity,
 } from "botbuilder";
 import { randomUUID } from "node:crypto";
-import { buildApprovalCard, buildHelpCard, buildStatusCard, buildTaskCard } from "./cards.js";
+import { downloadActivityFiles } from "./attachments.js";
+import {
+  buildApprovalCard,
+  buildHelpCard,
+  buildLastTaskCard,
+  buildProjectsCard,
+  buildStatusCard,
+  buildTaskCard,
+} from "./cards.js";
 import type { ServerConfig } from "./config.js";
 import type { ArtifactStore } from "./artifacts.js";
 import type { SessionStore, TaskRecord } from "./store.js";
@@ -24,6 +34,9 @@ type ApprovalPayload = {
   taskId?: string;
   approvalId?: string;
 };
+
+/** Flush log thread replies when card buffer grows past this many new chars. */
+const THREAD_LOG_CHUNK = 2200;
 
 export class AgentRelayBot {
   readonly adapter: CloudAdapter | null;
@@ -105,9 +118,12 @@ export class AgentRelayBot {
     const text = (context.activity.text ?? "")
       .replace(/<\/?at>/gi, "")
       .trim();
-    if (!text) return;
 
-    // Only respond to slash commands and !alias prompts.
+    const hasFiles = (context.activity.attachments ?? []).some(
+      (a) => a.contentUrl && !(a.contentType ?? "").toLowerCase().includes("card"),
+    );
+
+    // Only respond to slash commands and !alias prompts (or !alias with files).
     if (!text.startsWith("!") && !text.startsWith("/")) {
       return;
     }
@@ -122,7 +138,9 @@ export class AgentRelayBot {
         return;
       }
       if (this.store.pair(userId, code)) {
-        await context.sendActivity("Paired. Use `!alias your prompt`, `/ss`, or `/sshq`.");
+        await context.sendActivity(
+          "Paired. Use `!alias your prompt`, `/projects`, `/model`, `/ss`, or `/sshq`.",
+        );
         this.notifyWorkerPairing();
       } else {
         await context.sendActivity("Invalid pairing code. Check the AgentR tray and try again.");
@@ -159,6 +177,7 @@ export class AgentRelayBot {
               hostname: worker?.hostname,
               version: worker?.version,
               projects: worker?.repos ?? [],
+              agentModel: worker?.agentModel,
             }),
           ),
         ),
@@ -167,7 +186,7 @@ export class AgentRelayBot {
       return;
     }
 
-    if (lower === "/status" || lower === "/projects") {
+    if (lower === "/status") {
       const worker = this.store.getWorker();
       await context.sendActivity(
         MessageFactory.attachment(
@@ -178,10 +197,65 @@ export class AgentRelayBot {
               hostname: worker?.hostname,
               version: worker?.version,
               projects: worker?.repos ?? [],
+              agentModel: worker?.agentModel,
             }),
           ),
         ),
       );
+      return;
+    }
+
+    if (lower === "/projects") {
+      const worker = this.store.getWorker();
+      if (!worker) {
+        await context.sendActivity("Worker is offline. Start the AgentR tray on your PC.");
+        return;
+      }
+      await context.sendActivity(
+        MessageFactory.attachment(
+          CardFactory.adaptiveCard(
+            buildProjectsCard({
+              projects: worker.repos,
+              hostname: worker.hostname,
+            }),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (lower === "/last" || lower.startsWith("/last ")) {
+      if (!this.store.isPaired(userId)) {
+        await context.sendActivity("Not paired. Send `/pair <code>` first.");
+        return;
+      }
+      const last = this.store.getLastTaskForConversation(
+        context.activity.conversation.id,
+      );
+      if (!last) {
+        await context.sendActivity("No previous agent task in this chat.");
+        return;
+      }
+      await context.sendActivity(
+        MessageFactory.attachment(
+          CardFactory.adaptiveCard(
+            buildLastTaskCard({
+              taskId: last.taskId,
+              prompt: last.prompt,
+              status: last.status,
+              projectAlias: last.projectAlias,
+              exitCode: last.exitCode,
+              logs: last.logs,
+              createdAt: last.createdAt,
+            }),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (lower === "/model" || lower.startsWith("/model ")) {
+      await this.handleModelCommand(context, userId, text);
       return;
     }
 
@@ -203,7 +277,7 @@ export class AgentRelayBot {
       const conversationId = context.activity.conversation.id;
       const task = this.store.findRunningTaskForConversation(conversationId);
       if (!task) {
-        await context.sendActivity("No running task to cancel.");
+        await context.sendActivity("No running or queued task to cancel.");
         return;
       }
       const ok = this.hub.send({ type: "task.cancel", taskId: task.taskId });
@@ -238,51 +312,144 @@ export class AgentRelayBot {
       );
       return;
     }
-    if (!prompt) {
+
+    let files: TaskFile[] = [];
+    if (hasFiles) {
+      const downloaded = await downloadActivityFiles({
+        attachments: context.activity.attachments,
+        appId: this.config.microsoftAppId,
+        appPassword: this.config.microsoftAppPassword,
+        tenantId: this.config.microsoftAppTenantId,
+      });
+      files = downloaded.files;
+      if (downloaded.errors.length) {
+        await context.sendActivity(
+          `Attachment note: ${downloaded.errors.join("; ")}`,
+        );
+      }
+    }
+
+    const effectivePrompt =
+      prompt ||
+      (files.length > 0
+        ? "Review the files saved under `.agentr-inbox/` and summarize what to do next."
+        : "");
+
+    if (!effectivePrompt) {
       await context.sendActivity(
-        "Add a prompt after the alias. Example: `!sample what's in this folder?`",
+        "Add a prompt after the alias, or attach files. Example: `!sample what's in this folder?`",
       );
       return;
     }
 
+    if (alias && worker.repos.length > 0 && !worker.repos.includes(alias)) {
+      await context.sendActivity(
+        `Unknown project \`${alias}\`. Known: ${worker.repos.map((r) => `\`!${r}\``).join(", ") || "(none)"}`,
+      );
+      return;
+    }
+
+    await this.startAgentTask(context, {
+      alias,
+      prompt: effectivePrompt,
+      files,
+      hostname: worker.hostname,
+    });
+  }
+
+  private async handleModelCommand(
+    context: TurnContext,
+    userId: string,
+    text: string,
+  ): Promise<void> {
+    if (!this.store.isPaired(userId)) {
+      await context.sendActivity("Not paired. Send `/pair <code>` first.");
+      return;
+    }
+    const worker = this.store.getWorker();
+    if (!worker) {
+      await context.sendActivity("Worker is offline. Start the AgentR tray on your PC.");
+      return;
+    }
+
+    const arg = text.slice("/model".length).trim();
+    if (!arg) {
+      await context.sendActivity(
+        `Current model: \`${worker.agentModel || "auto"}\`.\nSet with \`/model auto\` or \`/model <name>\`.`,
+      );
+      return;
+    }
+
+    const ok = this.hub.send({
+      type: "worker.set_config",
+      agentModel: arg,
+    });
+    if (!ok) {
+      await context.sendActivity("Worker disconnected — could not set model.");
+      return;
+    }
+    worker.agentModel = arg;
+    await context.sendActivity(`Model set to \`${arg}\` on **${worker.hostname}**.`);
+  }
+
+  private async startAgentTask(
+    context: TurnContext,
+    opts: {
+      alias: string;
+      prompt: string;
+      files: TaskFile[];
+      hostname: string;
+    },
+  ): Promise<void> {
     const taskId = randomUUID();
+    const rootActivityId = context.activity.id;
     const conversation = {
       serviceUrl: context.activity.serviceUrl,
       conversationId: context.activity.conversation.id,
-      activityId: context.activity.id,
+      activityId: rootActivityId,
       tenantId: context.activity.conversation.tenantId,
     };
 
     const record = this.store.createTask({
       taskId,
       threadId: context.activity.conversation.id,
-      prompt,
-      projectAlias: alias,
+      prompt: opts.prompt,
+      projectAlias: opts.alias,
       conversation,
+      rootActivityId,
+      status: "queued",
     });
 
     const card = buildTaskCard({
       taskId,
-      prompt,
-      status: "running",
-      projectAlias: alias,
-      logs: [],
-      hostname: worker.hostname,
+      prompt: opts.prompt,
+      status: "queued",
+      projectAlias: opts.alias,
+      logs: opts.files.length
+        ? [`[agentr] ${opts.files.length} file(s) will be saved to .agentr-inbox/\n`]
+        : [],
+      hostname: opts.hostname,
     });
 
     const reply = MessageFactory.attachment(CardFactory.adaptiveCard(card));
+    if (rootActivityId) {
+      reply.replyToId = rootActivityId;
+    }
     const sent = await context.sendActivity(reply);
     if (sent?.id) {
       record.activityId = sent.id;
     }
 
+    const worker = this.store.getWorker();
     const ok = this.hub.send({
       type: "task.create",
       taskId,
-      prompt,
+      prompt: opts.prompt,
       threadId: record.threadId,
-      projectAlias: alias,
+      projectAlias: opts.alias,
       conversation,
+      files: opts.files.length ? opts.files : undefined,
+      agentModel: worker?.agentModel,
     });
 
     if (!ok) {
@@ -318,6 +485,7 @@ export class AgentRelayBot {
       threadId: conversation.conversationId,
       prompt: "Desktop screenshots",
       conversation,
+      rootActivityId: context.activity.id,
     });
 
     const ok = this.hub.send({
@@ -329,11 +497,13 @@ export class AgentRelayBot {
       await context.sendActivity("Worker disconnected — could not request screenshots.");
       return;
     }
-    await context.sendActivity(
+    const ack = MessageFactory.text(
       quality === "hq"
         ? "Capturing high-quality screenshots…"
         : "Capturing preview screenshots…",
     );
+    if (context.activity.id) ack.replyToId = context.activity.id;
+    await context.sendActivity(ack);
   }
 
   async onWorkerHello(
@@ -342,6 +512,7 @@ export class AgentRelayBot {
     repos: string[],
     socket: import("ws").WebSocket,
     pairingCode?: string,
+    agentModel?: string,
   ): Promise<void> {
     this.store.setWorker({
       socket,
@@ -349,6 +520,7 @@ export class AgentRelayBot {
       version,
       repos,
       connectedAt: Date.now(),
+      agentModel: agentModel || "auto",
     });
     if (pairingCode) {
       this.store.pairingCode = pairingCode;
@@ -360,8 +532,13 @@ export class AgentRelayBot {
       pairedUsers: this.store.pairedUserIds.size,
     });
     console.log(
-      `[ws] worker hello ${hostname} v${version} repos=${repos.join(",") || "-"} pair=${this.store.pairingCode}`,
+      `[ws] worker hello ${hostname} v${version} model=${agentModel || "auto"} repos=${repos.join(",") || "-"} pair=${this.store.pairingCode}`,
     );
+  }
+
+  onWorkerConfig(agentModel: string): void {
+    const worker = this.store.getWorker();
+    if (worker) worker.agentModel = agentModel;
   }
 
   /** Push paired-user count to the worker for tray checklist. */
@@ -423,7 +600,6 @@ export class AgentRelayBot {
       setTimeout(() => {
         this.artifactTimers.delete(task.taskId);
         void this.sendScreenshotCard(task!);
-        // Mark screenshot-only requests complete without a second image embed.
         if (task!.prompt === "Desktop screenshots") {
           this.store.setStatus(task!.taskId, "succeeded");
         }
@@ -434,27 +610,30 @@ export class AgentRelayBot {
   private async sendScreenshotCard(task: TaskRecord): Promise<void> {
     if (task.artifacts.length === 0) return;
 
-    // Adaptive Cards only show tiny non-expandable thumbs in many Teams clients.
-    // Send native image attachments so users can open full-size screenshots.
     await this.sendToConversation(
       task,
       MessageFactory.text(
         `**Desktop screenshots** — ${task.artifacts.length} display${task.artifacts.length === 1 ? "" : "s"}`,
       ),
+      true,
     );
 
     for (const shot of task.artifacts) {
-      await this.sendToConversation(task, {
-        type: "message",
-        text: shot.label,
-        attachments: [
-          {
-            contentType: shot.mimeType || "image/jpeg",
-            contentUrl: shot.url,
-            name: shot.name,
-          },
-        ],
-      });
+      await this.sendToConversation(
+        task,
+        {
+          type: "message",
+          text: shot.label,
+          attachments: [
+            {
+              contentType: shot.mimeType || "image/jpeg",
+              contentUrl: shot.url,
+              name: shot.name,
+            },
+          ],
+        },
+        true,
+      );
     }
   }
 
@@ -472,18 +651,21 @@ export class AgentRelayBot {
     await this.sendToConversation(
       task,
       MessageFactory.attachment(CardFactory.adaptiveCard(card)),
+      true,
     );
   }
 
   async onTaskStatus(
     taskId: string,
-    status: TaskRecord["status"],
+    status: TaskStatus,
     message?: string,
+    exitCode?: number,
+    queuePosition?: number,
   ): Promise<void> {
-    const task = this.store.setStatus(taskId, status);
+    const task = this.store.setStatus(taskId, status, exitCode);
     if (!task) return;
     if (message) task.logs.push(`\n[${status}] ${message}\n`);
-    await this.updateTaskCard(task);
+    await this.updateTaskCard(task, undefined, queuePosition);
   }
 
   private scheduleCardUpdate(task: TaskRecord): void {
@@ -501,8 +683,11 @@ export class AgentRelayBot {
   private async updateTaskCard(
     task: TaskRecord,
     extraLog?: string,
+    queuePosition?: number,
   ): Promise<void> {
     if (extraLog) task.logs.push(extraLog);
+    await this.flushLogThread(task);
+
     const worker = this.store.getWorker();
     const card = buildTaskCard({
       taskId: task.taskId,
@@ -511,6 +696,8 @@ export class AgentRelayBot {
       projectAlias: task.projectAlias,
       logs: task.logs,
       hostname: worker?.hostname,
+      exitCode: task.exitCode,
+      queuePosition,
     });
 
     if (!this.adapter || !task.activityId) {
@@ -543,9 +730,34 @@ export class AgentRelayBot {
     }
   }
 
+  /** Post overflow logs as replies under the task card. */
+  private async flushLogThread(task: TaskRecord): Promise<void> {
+    const full = task.logs.join("");
+    const flushed = task.flushedLogChars ?? 0;
+    if (full.length - flushed < THREAD_LOG_CHUNK) return;
+
+    // Leave a tail on the card; post the older overflow as a thread reply.
+    const keepTail = 1200;
+    const cutAt = Math.max(flushed, full.length - keepTail);
+    if (cutAt <= flushed) return;
+
+    const chunk = full.slice(flushed, cutAt).trim();
+    task.flushedLogChars = cutAt;
+    if (!chunk) return;
+
+    const body =
+      chunk.length > 3500 ? `…\n${chunk.slice(-3500)}` : chunk;
+    await this.sendToConversation(
+      task,
+      MessageFactory.text(`\`\`\`\n${body}\n\`\`\``),
+      true,
+    );
+  }
+
   private async sendToConversation(
     task: TaskRecord,
     activity: Partial<Activity>,
+    asThreadReply = false,
   ): Promise<void> {
     if (!this.adapter) {
       console.log("[mock] would send activity", activity);
@@ -560,6 +772,10 @@ export class AgentRelayBot {
         this.config.microsoftAppId,
         ref as never,
         async (ctx) => {
+          if (asThreadReply) {
+            const replyTo = task.activityId || task.rootActivityId;
+            if (replyTo) activity.replyToId = replyTo;
+          }
           await ctx.sendActivity(activity);
         },
       );
