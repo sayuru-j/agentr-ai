@@ -142,7 +142,7 @@ export function saveWorkerConfig(
     ...config,
     relayUrl: config.relayUrl.trim(),
     workerToken: config.workerToken.trim(),
-    agentCommand: (config.agentCommand || "agent").trim(),
+    agentCommand: stripOuterQuotes(config.agentCommand || "agent") || "agent",
     agentModel: (config.agentModel || "auto").trim() || "auto",
     dryRun: Boolean(config.dryRun),
     openAtLogin: Boolean(config.openAtLogin),
