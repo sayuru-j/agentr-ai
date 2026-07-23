@@ -209,7 +209,7 @@ export function buildFileGetCard(opts: {
   sizeLabel: string;
   url: string;
   mimeType: string;
-  /** Optional text preview (truncated OK). */
+  /** Optional short preview — keep tiny; large previews break Teams. */
   preview?: string;
   truncated?: boolean;
 }) {
@@ -232,24 +232,14 @@ export function buildFileGetCard(opts: {
   ];
 
   if (opts.preview != null && opts.preview.length > 0) {
-    const previewText = opts.truncated
-      ? `${opts.preview}\n\n…(preview truncated — use Download for the full file)`
-      : opts.preview;
     const clipped =
-      previewText.length > 2500
-        ? `${previewText.slice(0, 2500)}\n…`
-        : previewText;
+      opts.preview.length > 500 ? `${opts.preview.slice(0, 500)}…` : opts.preview;
     body.push({
       type: "TextBlock",
-      text: "Preview",
-      weight: "Bolder",
-      spacing: "Medium",
-    });
-    body.push({
-      type: "TextBlock",
-      text: clipped,
+      text: opts.truncated ? `${clipped}\n(truncated)` : clipped,
       wrap: true,
       size: "Small",
+      spacing: "Medium",
     });
   }
 

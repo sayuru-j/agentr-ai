@@ -103,7 +103,15 @@ export class AgentRelayBot {
     this.adapter = new CloudAdapter(auth);
     this.adapter.onTurnError = async (context, error) => {
       console.error("[bot] turn error", error);
-      await context.sendActivity("AgentR hit an error processing that message.");
+      const detail =
+        error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180);
+      try {
+        await context.sendActivity(
+          `AgentR hit an error processing that message.${detail ? ` (${detail})` : ""}`,
+        );
+      } catch {
+        /* ignore secondary failures */
+      }
     };
   }
 
@@ -588,10 +596,13 @@ export class AgentRelayBot {
       // Legacy inline-only replies: still show text if present
       if (msg.text != null) {
         const header = `**\`!${pending.alias}\`** \`${pathLabel}\` (${sizeLabel})`;
+        const preview = msg.text.length > 1500
+          ? `${msg.text.slice(0, 1500)}\n…`
+          : msg.text;
         await this.replyInConversation(
           pending.conversation,
           pending.rootActivityId,
-          `${header}\n\n\`\`\`\n${msg.text}\n\`\`\``,
+          `${header}\n\n\`\`\`\n${preview}\n\`\`\``,
         );
         return;
       }
@@ -603,74 +614,81 @@ export class AgentRelayBot {
       return;
     }
 
-    const stored = this.artifacts.save({
-      taskId: msg.requestId,
-      name: msg.name || pathLabel.split("/").pop() || "file.bin",
-      mimeType: msg.mimeType || "application/octet-stream",
-      dataBase64: msg.dataBase64,
-      label: pathLabel,
-    });
-
-    if (!this.adapter) {
-      console.log(`[mock] file.get ${pathLabel} → ${stored.url}`);
-      return;
-    }
-
-    const fileName = stored.name;
-    const header = `**\`!${pending.alias}\`** \`${pathLabel}\` (${sizeLabel})`;
-    const linkLine = `[Download ${fileName}](${stored.url})`;
-
     try {
-      const ref = {
-        conversation: { id: pending.conversation.conversationId },
-        serviceUrl: pending.conversation.serviceUrl,
-      };
-      await this.adapter.continueConversationAsync(
-        this.config.microsoftAppId,
-        ref as never,
-        async (ctx) => {
-          // Prefer octet-stream for the Teams chip so HTML/text show as a file,
-          // not an inline preview. The HTTPS URL still serves the real mime type.
-          const attachType = stored.mimeType.startsWith("image/")
-            ? stored.mimeType
-            : "application/octet-stream";
-          const fileMsg: Partial<Activity> = {
-            type: "message",
-            text: `${header}\n${linkLine}`,
-            attachments: [
-              {
-                contentType: attachType,
-                contentUrl: stored.url,
-                name: fileName,
-              },
-            ],
-          };
-          if (pending.rootActivityId) {
-            fileMsg.replyToId = pending.rootActivityId;
-          }
-          await ctx.sendActivity(fileMsg as Activity);
+      const stored = this.artifacts.save({
+        taskId: msg.requestId,
+        name: msg.name || pathLabel.split("/").pop() || "file.bin",
+        mimeType: msg.mimeType || "application/octet-stream",
+        dataBase64: msg.dataBase64,
+        label: pathLabel,
+      });
 
-          // 2) Card with OpenUrl + optional preview (some clients hide actions;
-          //    the attachment + markdown link above still work)
-          const card = MessageFactory.attachment(
-            CardFactory.adaptiveCard(
-              buildFileGetCard({
-                alias: pending.alias,
-                relativePath: pathLabel,
-                sizeLabel,
-                url: stored.url,
-                mimeType: stored.mimeType,
-                preview: msg.text,
-                truncated: msg.truncated,
-              }),
-            ),
-          );
-          if (pending.rootActivityId) card.replyToId = pending.rootActivityId;
-          await ctx.sendActivity(card);
-        },
+      if (!this.adapter) {
+        console.log(`[mock] file.get ${pathLabel} → ${stored.url}`);
+        return;
+      }
+
+      const fileName = stored.name;
+      const header = `**\`!${pending.alias}\`** \`${pathLabel}\` (${sizeLabel})`;
+      const linkLine = `[Download ${fileName}](${stored.url})`;
+
+      // Keep proactive payloads small — large Adaptive Card previews (e.g. full HTML)
+      // exceed Teams activity limits and trigger onTurnError ("hit an error").
+      await this.replyInConversation(
+        pending.conversation,
+        pending.rootActivityId,
+        `${header}\n${linkLine}`,
       );
+
+      if (msg.text) {
+        const preview = msg.text.length > 1200
+          ? `${msg.text.slice(0, 1200)}\n…`
+          : msg.text;
+        const note = msg.truncated
+          ? "\n\n_(preview truncated — use the download link for the full file)_"
+          : "\n\n_(preview — use the download link for the full file)_";
+        await this.replyInConversation(
+          pending.conversation,
+          pending.rootActivityId,
+          `\`\`\`\n${preview}\n\`\`\`${note}`,
+        );
+      }
+
+      // Compact card: facts + Download only (no body preview)
+      try {
+        const ref = {
+          conversation: { id: pending.conversation.conversationId },
+          serviceUrl: pending.conversation.serviceUrl,
+        };
+        await this.adapter.continueConversationAsync(
+          this.config.microsoftAppId,
+          ref as never,
+          async (ctx) => {
+            const card = MessageFactory.attachment(
+              CardFactory.adaptiveCard(
+                buildFileGetCard({
+                  alias: pending.alias,
+                  relativePath: pathLabel,
+                  sizeLabel,
+                  url: stored.url,
+                  mimeType: stored.mimeType,
+                }),
+              ),
+            );
+            if (pending.rootActivityId) card.replyToId = pending.rootActivityId;
+            await ctx.sendActivity(card);
+          },
+        );
+      } catch (cardErr) {
+        console.warn("[bot] file.get card skipped", cardErr);
+      }
     } catch (err) {
       console.error("[bot] file.get delivery failed", err);
+      await this.replyInConversation(
+        pending.conversation,
+        pending.rootActivityId,
+        `Fetched \`${pathLabel}\` but failed to publish the download. Check server logs.`,
+      );
     }
   }
 
