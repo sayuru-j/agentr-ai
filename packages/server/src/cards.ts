@@ -189,7 +189,7 @@ export function buildHelpCard() {
           { title: "/sshq", value: "High-quality screenshots (all monitors)" },
           {
             title: "/get",
-            value: "`!alias /get path` — fetch a project file (≤1.5 MB)",
+            value: "`!alias /get path` — fetch a file (basename OK; ≤1.5 MB)",
           },
           { title: "/cancel", value: "Cancel the running or queued agent task" },
           { title: "/help", value: "This help card" },

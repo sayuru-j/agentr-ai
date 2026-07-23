@@ -58,9 +58,10 @@ Fetch a file without running the agent:
 
 ```
 !frontend /get README.md
+!frontend /get index.html
 ```
 
-Small text is pasted into Teams; larger/binary files get a download link (max ~1.5 MB; path must stay inside the project).
+`/get` resolves an exact path under the project root first; if missing, it searches by **filename** (skips `node_modules`, `.git`, etc.). One match → returns it. Several matches → lists paths so you can retry with e.g. `sample_app/index.html`. Small text is pasted into Teams; larger/binary files get a download link (max ~1.5 MB).
 
 ## Checklist
 
