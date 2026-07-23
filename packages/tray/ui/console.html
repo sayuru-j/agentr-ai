@@ -21,6 +21,12 @@
         <button type="button" id="win-close" aria-label="Close" class="close">✕</button>
       </div>
     </header>
+    <div class="toolbar">
+      <input id="filter" type="search" placeholder="Filter logs…" spellcheck="false" />
+      <button type="button" id="copy" class="tool">Copy</button>
+      <button type="button" id="clear" class="tool">Clear</button>
+      <div id="pins" class="pins" aria-label="Pinned failed tasks"></div>
+    </div>
     <pre id="out" class="out" aria-live="polite"></pre>
     <script src="console.js"></script>
   </body>

@@ -14,6 +14,8 @@ body {
   color: #d7dbdf;
   font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .bar {
@@ -26,6 +28,7 @@ body {
   border-bottom: 1px solid #2a2e35;
   -webkit-app-region: drag;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .bar-drag {
@@ -76,10 +79,75 @@ body {
   color: #fff;
 }
 
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #12141a;
+  border-bottom: 1px solid #2a2e35;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.toolbar input[type="search"] {
+  flex: 1;
+  min-width: 140px;
+  height: 28px;
+  border: 1px solid #2a2e35;
+  border-radius: 6px;
+  background: #0c0d0f;
+  color: #d7dbdf;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.tool {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #2a2e35;
+  border-radius: 6px;
+  background: #1a1d24;
+  color: #d7dbdf;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tool:hover {
+  background: #2a2e35;
+}
+
+.pins {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.pin {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid #5c2b2b;
+  border-radius: 999px;
+  background: #2a1515;
+  color: #f5a4a0;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pin.active {
+  border-color: #8ec8ff;
+  color: #8ec8ff;
+  background: #152033;
+}
+
 .out {
   margin: 0;
   padding: 12px 14px 20px;
-  height: calc(100% - 36px);
+  flex: 1;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;

@@ -4,14 +4,26 @@ const $ = (id) => document.getElementById(id);
 /** Last token loaded from disk — kept if the password field is left blank on save. */
 let savedToken = "";
 
-function projectRow(alias = "", path = "") {
+function projectRow(alias = "", path = "", agentModel = "", dryRun = false) {
   const row = document.createElement("div");
   row.className = "project-row";
   row.innerHTML = `
-    <input class="alias" type="text" spellcheck="false" placeholder="alias" value="${escapeAttr(alias)}" />
-    <input class="path" type="text" spellcheck="false" placeholder="No folder selected" value="${escapeAttr(path)}" readonly />
-    <button type="button" class="browse">Browse</button>
-    <button type="button" class="remove" aria-label="Remove">×</button>
+    <div class="project-main">
+      <input class="alias" type="text" spellcheck="false" placeholder="alias" value="${escapeAttr(alias)}" />
+      <input class="path" type="text" spellcheck="false" placeholder="No folder selected" value="${escapeAttr(path)}" readonly />
+      <button type="button" class="browse">Browse</button>
+      <button type="button" class="remove" aria-label="Remove">×</button>
+    </div>
+    <div class="project-opts">
+      <label class="mini">
+        <span>Model</span>
+        <input class="model" type="text" spellcheck="false" placeholder="inherit" value="${escapeAttr(agentModel)}" />
+      </label>
+      <label class="mini check">
+        <input class="dry" type="checkbox" ${dryRun ? "checked" : ""} />
+        <span>Dry run</span>
+      </label>
+    </div>
   `;
   row.querySelector(".remove").addEventListener("click", () => {
     row.remove();
@@ -34,8 +46,8 @@ function escapeAttr(value) {
     .replaceAll(">", "&gt;");
 }
 
-function addProject(alias = "", path = "") {
-  $("projects").appendChild(projectRow(alias, path));
+function addProject(alias = "", path = "", agentModel = "", dryRun = false) {
+  $("projects").appendChild(projectRow(alias, path, agentModel, dryRun));
   updateProjectsEmpty();
 }
 
@@ -49,18 +61,37 @@ function readProjects() {
   for (const row of $("projects").querySelectorAll(".project-row")) {
     const alias = row.querySelector(".alias").value.trim();
     const path = row.querySelector(".path").value.trim();
-    if (alias && path) out[alias] = path;
+    if (!alias || !path) continue;
+    const agentModel = row.querySelector(".model").value.trim();
+    const dryRun = row.querySelector(".dry").checked;
+    const entry = { path };
+    if (agentModel) entry.agentModel = agentModel;
+    if (dryRun) entry.dryRun = true;
+    out[alias] = entry;
   }
   return out;
 }
 
-function setStatus(status, pairingCode, checklist) {
+function setStatus(status, pairingCode, checklist, extra = {}) {
   const el = $("status-label");
   el.textContent = status;
   el.className = `title-status ${status}`;
   $("pairing-btn").textContent = `/pair ${pairingCode || "--------"}`;
   $("pairing-btn").dataset.code = pairingCode || "";
   if (checklist) renderChecklist(checklist);
+  renderUpdate(extra.update);
+  $("lock-banner").hidden = !extra.sessionLocked;
+}
+
+function renderUpdate(update) {
+  const banner = $("update-banner");
+  if (!update?.updateAvailable) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  $("update-text").textContent =
+    `Update v${update.remoteVersion} available (you have v${update.localVersion}).`;
 }
 
 function renderChecklist(checklist) {
@@ -132,10 +163,19 @@ function fillForm(config) {
   $("agentCommand").value = config.agentCommand || "agent";
   $("agentModel").value = config.agentModel || "auto";
   $("dryRun").checked = Boolean(config.dryRun);
+  $("openAtLogin").checked = Boolean(config.openAtLogin);
+  $("startMinimized").checked = config.startMinimized !== false;
+  $("checkUpdates").checked = config.checkUpdates !== false;
   updateTokenSavedLabel(savedToken);
   $("projects").innerHTML = "";
   const entries = Object.entries(config.projects || {});
-  for (const [alias, path] of entries) addProject(alias, path);
+  for (const [alias, entry] of entries) {
+    if (typeof entry === "string") {
+      addProject(alias, entry);
+    } else {
+      addProject(alias, entry.path || "", entry.agentModel || "", Boolean(entry.dryRun));
+    }
+  }
   updateProjectsEmpty();
 }
 
@@ -147,6 +187,9 @@ function readForm() {
     agentCommand: $("agentCommand").value.trim() || "agent",
     agentModel: $("agentModel").value.trim() || "auto",
     dryRun: $("dryRun").checked,
+    openAtLogin: $("openAtLogin").checked,
+    startMinimized: $("startMinimized").checked,
+    checkUpdates: $("checkUpdates").checked,
     projects: readProjects(),
   };
 }
@@ -194,7 +237,7 @@ async function saveAll(connect = true) {
     updateTokenSavedLabel(savedToken);
     $("agentCommand").value = saved.agentCommand || $("agentCommand").value;
     const live = await window.agentr.getStatus();
-    setStatus(live.status, live.pairingCode, live.checklist);
+    setStatus(live.status, live.pairingCode, live.checklist, live);
     showMsg(connect ? "Saved — connecting…" : "Projects saved");
   } catch (err) {
     showMsg(err?.message || "Save failed", true);
@@ -214,10 +257,10 @@ async function boot() {
     window.agentr.getStatus(),
   ]);
   fillForm(config);
-  setStatus(live.status, live.pairingCode, live.checklist);
+  setStatus(live.status, live.pairingCode, live.checklist, live);
 
   window.agentr.onStatus((payload) => {
-    setStatus(payload.status, payload.pairingCode, payload.checklist);
+    setStatus(payload.status, payload.pairingCode, payload.checklist, payload);
   });
 
   $("add-project").addEventListener("click", () => addProject());
@@ -250,6 +293,18 @@ async function boot() {
     } catch {
       showMsg("Could not copy", true);
     }
+  });
+
+  $("update-open").addEventListener("click", () => window.agentr.openUpdate());
+  $("check-updates-now").addEventListener("click", async () => {
+    const result = await window.agentr.checkUpdates();
+    renderUpdate(result);
+    showMsg(
+      result.updateAvailable
+        ? `Update v${result.remoteVersion} available`
+        : result.error || "You're up to date",
+      Boolean(result.error && !result.updateAvailable),
+    );
   });
 
   $("save-home").addEventListener("click", () => saveAll(true));

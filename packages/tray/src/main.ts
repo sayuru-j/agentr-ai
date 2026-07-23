@@ -8,6 +8,7 @@ import {
   nativeImage,
   shell,
   Notification,
+  powerMonitor,
 } from "electron";
 import {
   AgentRelayWorker,
@@ -19,22 +20,24 @@ import {
   defaultConfig,
   resolveAgentCommand,
   preferResolvedAgentCommand,
+  coerceProjects,
   type WorkerConfig,
   type WorkerStatus,
   type ResolveAgentResult,
 } from "@agentr/worker";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkGithubReleaseUpdate, type UpdateCheckResult } from "./updates.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRELOAD_PATH = join(__dirname, "..", "preload.cjs");
 const UI_PATH = join(__dirname, "..", "ui", "index.html");
 const CONSOLE_UI_PATH = join(__dirname, "..", "ui", "console.html");
+const PACKAGE_JSON = join(__dirname, "..", "package.json");
 const LOGO_CANDIDATES = [
   join(__dirname, "..", "ui", "logo.png"),
   join(__dirname, "ui", "logo.png"),
-  // electron-builder extraResources
   ...(typeof process.resourcesPath === "string"
     ? [join(process.resourcesPath, "logo.png")]
     : []),
@@ -50,6 +53,19 @@ let status: WorkerStatus = "offline";
 let pairedUsers = 0;
 let cachedAppIcon: Electron.NativeImage | null = null;
 let cachedTrayIcon: Electron.NativeImage | null = null;
+let lastUpdate: UpdateCheckResult | null = null;
+let sessionLocked = false;
+
+function appVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(PACKAGE_JSON, "utf8")) as {
+      version?: string;
+    };
+    return pkg.version || "0.1.0";
+  } catch {
+    return "0.1.0";
+  }
+}
 
 function resolveLogoPath(): string | null {
   for (const candidate of LOGO_CANDIDATES) {
@@ -81,7 +97,49 @@ function broadcastStatus(): void {
     pairingCode,
     pairedUsers,
     checklist: buildChecklist(),
+    update: lastUpdate,
+    sessionLocked,
   });
+}
+
+function applyLoginItemSettings(config: WorkerConfig): void {
+  if (process.platform !== "win32") return;
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(config.openAtLogin),
+      openAsHidden: true,
+      path: process.execPath,
+      args: app.isPackaged ? [] : [join(__dirname, "..")],
+    });
+  } catch (err) {
+    console.warn("[tray] setLoginItemSettings failed", err);
+  }
+}
+
+async function runUpdateCheck(force = false): Promise<UpdateCheckResult> {
+  const config = loadWorkerConfig();
+  if (!force && config.checkUpdates === false) {
+    lastUpdate = {
+      checked: false,
+      updateAvailable: false,
+      localVersion: appVersion(),
+      error: "Update checks disabled",
+    };
+    broadcastStatus();
+    return lastUpdate;
+  }
+  lastUpdate = await checkGithubReleaseUpdate({
+    localVersion: appVersion(),
+  });
+  broadcastStatus();
+  rebuildMenu();
+  if (lastUpdate.updateAvailable && Notification.isSupported()) {
+    new Notification({
+      title: "AgentR update available",
+      body: `v${lastUpdate.remoteVersion} is out (you have v${lastUpdate.localVersion}).`,
+    }).show();
+  }
+  return lastUpdate;
 }
 
 interface ChecklistState {
@@ -124,9 +182,12 @@ function autoPersistResolvedAgent(config: WorkerConfig): WorkerConfig {
 
 function rebuildMenu(): void {
   if (!tray) return;
+  const updateLabel = lastUpdate?.updateAvailable
+    ? `Update available (v${lastUpdate.remoteVersion})…`
+    : "Check for updates…";
   const menu = Menu.buildFromTemplate([
     {
-      label: `AgentR — ${status}`,
+      label: `AgentR — ${status}${sessionLocked ? " · locked" : ""}`,
       enabled: false,
     },
     {
@@ -148,6 +209,18 @@ function rebuildMenu(): void {
     {
       label: "Reconnect",
       click: () => worker?.reconnect(),
+    },
+    {
+      label: updateLabel,
+      click: () => {
+        if (lastUpdate?.updateAvailable && lastUpdate.releaseUrl) {
+          void shell.openExternal(
+            lastUpdate.portableUrl || lastUpdate.releaseUrl,
+          );
+        } else {
+          void runUpdateCheck(true);
+        }
+      },
     },
     {
       label: "Open config folder",
@@ -179,8 +252,8 @@ function openSettings(): void {
   }
 
   settingsWindow = new BrowserWindow({
-    width: 420,
-    height: 700,
+    width: 440,
+    height: 760,
     minWidth: 380,
     minHeight: 560,
     title: "AgentR",
@@ -322,12 +395,17 @@ function startWorker(): void {
     console.warn("[tray] Open settings to paste worker token and relay URL.");
   }
 
+  applyLoginItemSettings(config);
   worker.start();
   pairingCode = worker.getPairingCode();
   rebuildMenu();
 
-  if (needsSetup) {
+  if (needsSetup || !config.startMinimized) {
     openSettings();
+  }
+
+  if (config.checkUpdates !== false) {
+    void runUpdateCheck(false);
   }
 }
 
@@ -341,7 +419,7 @@ function registerIpc(): void {
     const next: WorkerConfig = {
       ...current,
       ...partial,
-      projects: partial.projects ?? current.projects,
+      projects: coerceProjects(partial.projects ?? current.projects),
     };
     if (!next.relayUrl?.trim()) {
       throw new Error("Relay URL is required");
@@ -355,9 +433,13 @@ function registerIpc(): void {
       );
     }
     saveWorkerConfig(next);
+    applyLoginItemSettings(next);
     worker?.updateConfig(next);
     worker?.reconnect();
     broadcastStatus();
+    if (next.checkUpdates) {
+      void runUpdateCheck(false);
+    }
     return next;
   });
 
@@ -366,9 +448,21 @@ function registerIpc(): void {
     pairingCode,
     pairedUsers,
     checklist: buildChecklist(),
+    update: lastUpdate,
+    sessionLocked,
+    version: appVersion(),
+    packaged: app.isPackaged,
   }));
 
   ipcMain.handle("checklist:get", () => buildChecklist());
+
+  ipcMain.handle("updates:check", () => runUpdateCheck(true));
+
+  ipcMain.handle("updates:open", () => {
+    const url = lastUpdate?.portableUrl || lastUpdate?.releaseUrl;
+    if (url) void shell.openExternal(url);
+    return { ok: Boolean(url) };
+  });
 
   ipcMain.handle("agent:resolve", (_event, configured?: string) => {
     const cmd =
@@ -424,6 +518,17 @@ if (!gotLock) {
     tray = new Tray(trayIcon());
     tray.on("double-click", () => openSettings());
     rebuildMenu();
+
+    powerMonitor.on("lock-screen", () => {
+      sessionLocked = true;
+      console.warn("[tray] Screen locked — /ss will fail until unlock");
+      rebuildMenu();
+    });
+    powerMonitor.on("unlock-screen", () => {
+      sessionLocked = false;
+      rebuildMenu();
+    });
+
     startWorker();
   });
 

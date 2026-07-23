@@ -73,6 +73,15 @@
           <p id="checklist-ready" class="checklist-ready" hidden>Ready — send <code>!alias your prompt</code> in Teams.</p>
         </div>
 
+        <div id="update-banner" class="update-banner" hidden>
+          <p id="update-text" class="update-text"></p>
+          <button type="button" id="update-open" class="text-btn">Download</button>
+        </div>
+
+        <p id="lock-banner" class="lock-banner" hidden>
+          Screen is locked — <code>/ss</code> will fail until you unlock Windows.
+        </p>
+
         <p class="hint">
           Status updates live. Pair in Teams, then send
           <code>!alias your prompt</code>. Use <code>/ss</code> or <code>/sshq</code> for screenshots.
@@ -151,10 +160,26 @@
 
         <label class="check">
           <input id="dryRun" type="checkbox" />
-          <span>Dry run</span>
+          <span>Dry run (global default)</span>
+        </label>
+
+        <label class="check">
+          <input id="openAtLogin" type="checkbox" />
+          <span>Start with Windows</span>
+        </label>
+
+        <label class="check">
+          <input id="startMinimized" type="checkbox" />
+          <span>Start minimized to tray</span>
+        </label>
+
+        <label class="check">
+          <input id="checkUpdates" type="checkbox" />
+          <span>Check GitHub Releases for updates</span>
         </label>
 
         <div class="home-actions">
+          <button type="button" id="check-updates-now" class="btn">Check updates</button>
           <button type="button" id="save-settings" class="btn btn-main">Save &amp; connect</button>
         </div>
       </section>

@@ -337,10 +337,74 @@ input.path[readonly] {
 }
 
 .project-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.project-main {
   display: grid;
   grid-template-columns: 100px 1fr auto auto;
   gap: 8px;
   align-items: center;
+}
+
+.project-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
+  padding-left: 2px;
+}
+
+.project-opts .mini {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.project-opts .mini input.model {
+  width: 120px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #c9b27a;
+  background: #f7f1e3;
+}
+
+.update-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.35;
+}
+
+.lock-banner {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2b6b6;
+  background: #f8ecec;
+  font-size: 12px;
+  color: var(--bad);
+  line-height: 1.4;
+}
+
+.lock-banner code {
+  font-size: 11px;
 }
 
 .check {

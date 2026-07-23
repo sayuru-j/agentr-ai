@@ -44,11 +44,13 @@ Config always lives in `%USERPROFILE%\.agent-relay\config.json` (same for portab
    - **Relay URL** → `wss://YOUR_DOMAIN/ws`
    - **Worker token** → paste from step 1
    - **Agent command** → leave as `agent`, or click **Find** (searches PATH and `%LOCALAPPDATA%\cursor-agent`)
-   - **Projects** → alias → local folder (e.g. `frontend` → `C:/dev/app`)
-   - Optional: enable **Dry run** to test without Cursor CLI
+   - **Projects** → alias → folder, optional per-project **model** / **dry run**
+   - **Start with Windows** / **Start minimized to tray** / **Check for updates**
+   - Optional: enable global **Dry run** to test without Cursor CLI
 3. Click **Save & connect**
 
-Home shows a **setup checklist**: token, agent CLI, relay online, paired in Teams.
+Home shows a **setup checklist**: token, agent CLI, relay online, paired in Teams.  
+`/ss` fails clearly if Windows is locked; AgentR nudges displays awake when unlocked.
 
 ## Tray menu
 

@@ -12,6 +12,8 @@ import type { WorkerConfig } from "./config.js";
 import { saveWorkerConfig } from "./config.js";
 import { writeTaskInboxFiles } from "./inbox.js";
 import { preferResolvedAgentCommand } from "./resolve-agent.js";
+import { prepareForScreenshot } from "./display.js";
+import { projectPath, type ProjectEntry } from "./config.js";
 import { newApprovalId, TaskRunner } from "./runner.js";
 import { captureAllDisplays } from "./screenshot.js";
 import { uploadScreenshotsHttps } from "./upload.js";
@@ -371,20 +373,19 @@ export class AgentRelayWorker {
     }
   }
 
-  private resolveCwd(projectAlias?: string): string | null {
+  private resolveProject(projectAlias?: string): ProjectEntry | null {
     if (!projectAlias) {
       const first = Object.values(this.config.projects)[0];
-      return first ?? process.cwd();
+      return first ?? { path: process.cwd() };
     }
-    const path = this.config.projects[projectAlias];
-    if (!path) return null;
-    return path;
+    return this.config.projects[projectAlias] ?? null;
   }
 
   private async runTask(task: QueuedTask): Promise<void> {
     const { taskId, projectAlias, files, agentModel } = task;
     let { prompt } = task;
-    const cwd = this.resolveCwd(projectAlias);
+    const project = this.resolveProject(projectAlias);
+    const cwd = project ? projectPath(project) : null;
     if (!cwd) {
       this.send({
         type: "task.status",
@@ -412,6 +413,17 @@ export class AgentRelayWorker {
       }
     }
 
+    const model =
+      (agentModel ||
+        project?.agentModel ||
+        this.config.agentModel ||
+        "auto"
+      ).trim() || "auto";
+    const dryRun =
+      typeof project?.dryRun === "boolean"
+        ? project.dryRun
+        : this.config.dryRun;
+
     this.setStatus("busy");
     this.send({ type: "task.status", taskId, status: "running" });
     this.emit("taskStart", { taskId, prompt, cwd });
@@ -424,8 +436,8 @@ export class AgentRelayWorker {
       prompt,
       cwd,
       agentCommand: preferResolvedAgentCommand(this.config.agentCommand),
-      agentModel: (agentModel || this.config.agentModel || "auto").trim() || "auto",
-      dryRun: this.config.dryRun,
+      agentModel: model,
+      dryRun,
       onLog: (stream, chunk) => {
         this.emit("taskLog", { taskId, stream, chunk });
         this.send({
@@ -489,6 +501,16 @@ export class AgentRelayWorker {
   ): Promise<void> {
     this.setStatus("busy");
     try {
+      const display = await prepareForScreenshot();
+      if (display.locked) {
+        throw new Error(
+          display.detail ||
+            "Windows session is locked. Unlock the PC, then retry /ss.",
+        );
+      }
+      if (display.woke) {
+        this.emit("log", `Screenshot prep: ${display.detail || "woke displays"}`);
+      }
       const screens = await captureAllDisplays(quality);
       this.emit(
         "log",
