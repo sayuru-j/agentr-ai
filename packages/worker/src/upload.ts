@@ -27,7 +27,7 @@ export async function uploadScreenshotsHttps(opts: {
     buffer: Buffer;
   }>;
   tlsInsecure?: boolean;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; urls?: string[] }> {
   const base = httpBaseFromRelayUrl(opts.relayUrl);
   const url = `${base}/api/artifacts`;
   const body = {
@@ -54,5 +54,15 @@ export async function uploadScreenshotsHttps(opts: {
     const text = await res.text().catch(() => "");
     return { ok: false, error: `HTTP ${res.status} ${text.slice(0, 200)}` };
   }
-  return { ok: true };
+  try {
+    const body = (await res.json()) as {
+      screenshots?: Array<{ url?: string }>;
+    };
+    const urls = (body.screenshots ?? [])
+      .map((s) => s.url)
+      .filter((u): u is string => Boolean(u));
+    return { ok: true, urls };
+  } catch {
+    return { ok: true };
+  }
 }

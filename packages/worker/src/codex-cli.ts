@@ -11,6 +11,8 @@ export type CodexCliProfile = {
   cdShort: boolean;
   cdLong: boolean;
   sandbox?: string;
+  resumeFlag?: string;
+  threadFlag?: string;
 };
 
 const profileCache = new Map<string, CodexCliProfile>();
@@ -61,6 +63,14 @@ export function detectCodexCliProfile(agentCommand: string): CodexCliProfile {
     profile.sandbox = "enabled";
   }
 
+  if (execHelpHas(help, /--resume\b/)) {
+    profile.resumeFlag = "--resume";
+  } else if (execHelpHas(help, /-t,\s*--thread/)) {
+    profile.threadFlag = "-t";
+  } else if (execHelpHas(help, /--thread\b/)) {
+    profile.threadFlag = "--thread";
+  }
+
   if (!help.trim()) {
     profile.jsonOutput = false;
     profile.skipGitRepoCheck = false;
@@ -77,7 +87,7 @@ export function detectCodexCliProfile(agentCommand: string): CodexCliProfile {
 }
 
 export function buildCodexExecArgs(
-  opts: { cwd: string },
+  opts: { cwd: string; agentThreadId?: string },
   model: string,
   prompt: string,
   agentCommand: string,
@@ -90,6 +100,14 @@ export function buildCodexExecArgs(
   if (profile.sandbox) args.push("--sandbox", profile.sandbox);
   if (profile.configApprovalNever) {
     args.push("-c", "approval_policy=never");
+  }
+
+  if (opts.agentThreadId) {
+    if (profile.resumeFlag) {
+      args.push(profile.resumeFlag, opts.agentThreadId);
+    } else if (profile.threadFlag) {
+      args.push(profile.threadFlag, opts.agentThreadId);
+    }
   }
 
   if (profile.modelShort) {

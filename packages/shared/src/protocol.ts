@@ -9,6 +9,9 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+export const ResumeModeSchema = z.enum(["continue", "fresh"]);
+export type ResumeMode = z.infer<typeof ResumeModeSchema>;
+
 export const ConversationRefSchema = z.object({
   serviceUrl: z.string(),
   conversationId: z.string(),
@@ -25,6 +28,39 @@ export const TaskFileSchema = z.object({
 });
 export type TaskFile = z.infer<typeof TaskFileSchema>;
 
+export const ResumeContextSchema = z.object({
+  parentTaskId: z.string(),
+  agentThreadId: z.string().optional(),
+  logSummary: z.string().optional(),
+  priorPrompt: z.string().optional(),
+});
+export type ResumeContext = z.infer<typeof ResumeContextSchema>;
+
+export const CliDiagnosisSummarySchema = z.object({
+  ok: z.boolean(),
+  version: z.string().optional(),
+  errors: z.array(z.string()).optional(),
+  warnings: z.array(z.string()).optional(),
+});
+export type CliDiagnosisSummary = z.infer<typeof CliDiagnosisSummarySchema>;
+
+export const ProjectGuardrailsSchema = z.object({
+  readOnly: z.boolean().optional(),
+  requireApproval: z.boolean().optional(),
+  maxRuntimeMinutes: z.number().optional(),
+  denyPatterns: z.array(z.string()).optional(),
+  allowPatterns: z.array(z.string()).optional(),
+  blockWhenLocked: z.boolean().optional(),
+});
+export type ProjectGuardrails = z.infer<typeof ProjectGuardrailsSchema>;
+
+export const ProjectMetaSchema = z.object({
+  alias: z.string(),
+  prompts: z.record(z.string()).optional(),
+  guardrails: ProjectGuardrailsSchema.optional(),
+});
+export type ProjectMeta = z.infer<typeof ProjectMetaSchema>;
+
 /** Worker → Server: announce identity after connect */
 export const WorkerHelloSchema = z.object({
   type: z.literal("worker.hello"),
@@ -33,6 +69,13 @@ export const WorkerHelloSchema = z.object({
   repos: z.array(z.string()),
   pairingCode: z.string().optional(),
   agentModel: z.string().optional(),
+  agentBackend: z.enum(["cursor", "codex"]).optional(),
+  sessionLocked: z.boolean().optional(),
+  queueDepth: z.number().int().nonnegative().optional(),
+  queueTaskIds: z.array(z.string()).optional(),
+  cliDiagnosis: CliDiagnosisSummarySchema.optional(),
+  globalPrompts: z.record(z.string()).optional(),
+  projectMeta: z.array(ProjectMetaSchema).optional(),
 });
 export type WorkerHello = z.infer<typeof WorkerHelloSchema>;
 
@@ -48,6 +91,9 @@ export const TaskCreateSchema = z.object({
   files: z.array(TaskFileSchema).max(8).optional(),
   /** Per-task model override (otherwise worker config). */
   agentModel: z.string().optional(),
+  parentTaskId: z.string().optional(),
+  resumeMode: ResumeModeSchema.optional(),
+  resumeContext: ResumeContextSchema.optional(),
 });
 export type TaskCreate = z.infer<typeof TaskCreateSchema>;
 
@@ -91,6 +137,11 @@ export const TaskApprovalRequestSchema = z.object({
   approvalId: z.string(),
   command: z.string(),
   reason: z.string(),
+  projectAlias: z.string().optional(),
+  cwd: z.string().optional(),
+  gitBranch: z.string().optional(),
+  gitDirty: z.boolean().optional(),
+  screenshotUrl: z.string().optional(),
 });
 export type TaskApprovalRequest = z.infer<typeof TaskApprovalRequestSchema>;
 
@@ -111,8 +162,18 @@ export const TaskStatusMessageSchema = z.object({
   message: z.string().optional(),
   exitCode: z.number().optional(),
   queuePosition: z.number().int().positive().optional(),
+  summary: z.string().optional(),
+  agentThreadId: z.string().optional(),
 });
 export type TaskStatusMessage = z.infer<typeof TaskStatusMessageSchema>;
+
+/** Worker → Server: queue snapshot */
+export const WorkerQueueSchema = z.object({
+  type: z.literal("worker.queue"),
+  runningTaskId: z.string().optional(),
+  queuedTaskIds: z.array(z.string()),
+});
+export type WorkerQueue = z.infer<typeof WorkerQueueSchema>;
 
 /** Worker → Server: binary-ish artifact (screenshot) as base64 */
 export const TaskArtifactSchema = z.object({
@@ -149,6 +210,9 @@ export const WorkerPongSchema = z.object({
   requestId: z.string(),
   sentAt: z.number(),
   projects: z.array(ProjectDiskSchema).optional(),
+  sessionLocked: z.boolean().optional(),
+  queueDepth: z.number().int().nonnegative().optional(),
+  queueTaskIds: z.array(z.string()).optional(),
 });
 export type WorkerPong = z.infer<typeof WorkerPongSchema>;
 
@@ -216,6 +280,7 @@ export const WorkerToServerSchema = z.discriminatedUnion("type", [
   WorkerConfigSchema,
   WorkerPongSchema,
   FileResultSchema,
+  WorkerQueueSchema,
 ]);
 export type WorkerToServer = z.infer<typeof WorkerToServerSchema>;
 

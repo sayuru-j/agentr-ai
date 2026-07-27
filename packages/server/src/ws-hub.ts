@@ -19,6 +19,7 @@ export class WorkerHub {
   private wss: WebSocketServer | null = null;
   private httpServer: HttpServer | null = null;
   private onMessage: WorkerMessageHandler | null = null;
+  private onDisconnect: ((hostname: string | null) => void) | null = null;
 
   constructor(
     private readonly config: ServerConfig,
@@ -27,6 +28,10 @@ export class WorkerHub {
 
   setMessageHandler(handler: WorkerMessageHandler): void {
     this.onMessage = handler;
+  }
+
+  setDisconnectHandler(handler: (hostname: string | null) => void): void {
+    this.onDisconnect = handler;
   }
 
   start(): HttpServer {
@@ -76,14 +81,17 @@ export class WorkerHub {
           msg.type === "task.approval_request" ||
           msg.type === "task.status" ||
           msg.type === "task.artifact" ||
-          msg.type === "file.result"
+          msg.type === "file.result" ||
+          msg.type === "worker.queue"
         ) {
           this.onMessage?.(msg, socket);
         }
       });
 
       socket.on("close", () => {
+        const hostname = this.store.getWorker()?.hostname ?? this.store.lastWorkerHostname;
         this.store.clearWorker(socket);
+        this.onDisconnect?.(hostname);
       });
     });
 

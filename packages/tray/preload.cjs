@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("agentr", {
   getChecklist: () => ipcRenderer.invoke("checklist:get"),
   resolveAgent: (configured, backend) =>
     ipcRenderer.invoke("agent:resolve", { configured, backend }),
+  diagnoseAgent: (configured, backend) =>
+    ipcRenderer.invoke("agent:diagnose", { configured, backend }),
   checkUpdates: () => ipcRenderer.invoke("updates:check"),
   openUpdate: () => ipcRenderer.invoke("updates:open"),
   reconnect: () => ipcRenderer.invoke("worker:reconnect"),

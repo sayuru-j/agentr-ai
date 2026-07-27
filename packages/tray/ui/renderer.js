@@ -4,7 +4,12 @@ const $ = (id) => document.getElementById(id);
 /** Last token loaded from disk — kept if the password field is left blank on save. */
 let savedToken = "";
 
-function projectRow(alias = "", path = "", agentModel = "", dryRun = false) {
+function projectRow(alias = "", path = "", agentModel = "", dryRun = false, guardrails = {}, prompts = {}) {
+  const gr = guardrails || {};
+  const deny = Array.isArray(gr.denyPatterns) ? gr.denyPatterns.join("\n") : "";
+  const promptsJson = prompts && Object.keys(prompts).length
+    ? JSON.stringify(prompts, null, 2)
+    : "";
   const row = document.createElement("div");
   row.className = "project-row";
   row.innerHTML = `
@@ -23,7 +28,27 @@ function projectRow(alias = "", path = "", agentModel = "", dryRun = false) {
         <input class="dry" type="checkbox" ${dryRun ? "checked" : ""} />
         <span>Dry run</span>
       </label>
+      <label class="mini check">
+        <input class="read-only" type="checkbox" ${gr.readOnly ? "checked" : ""} />
+        <span>Read-only</span>
+      </label>
+      <label class="mini check">
+        <input class="block-lock" type="checkbox" ${gr.blockWhenLocked !== false ? "checked" : ""} />
+        <span>Block when locked</span>
+      </label>
     </div>
+    <label class="mini field-block">
+      <span>Max runtime (min, 0=inherit)</span>
+      <input class="max-runtime" type="number" min="0" step="1" value="${gr.maxRuntimeMinutes || 0}" />
+    </label>
+    <label class="mini field-block">
+      <span>Deny patterns (regex, one per line)</span>
+      <textarea class="deny-patterns" rows="2" spellcheck="false">${escapeAttr(deny)}</textarea>
+    </label>
+    <label class="mini field-block">
+      <span>Prompt shortcuts (JSON)</span>
+      <textarea class="prompts-json" rows="2" spellcheck="false" placeholder='{"fix-tests": "..."}'>${escapeAttr(promptsJson)}</textarea>
+    </label>
   `;
   row.querySelector(".remove").addEventListener("click", () => {
     row.remove();
@@ -46,8 +71,8 @@ function escapeAttr(value) {
     .replaceAll(">", "&gt;");
 }
 
-function addProject(alias = "", path = "", agentModel = "", dryRun = false) {
-  $("projects").appendChild(projectRow(alias, path, agentModel, dryRun));
+function addProject(alias = "", path = "", agentModel = "", dryRun = false, guardrails = {}, prompts = {}) {
+  $("projects").appendChild(projectRow(alias, path, agentModel, dryRun, guardrails, prompts));
   updateProjectsEmpty();
 }
 
@@ -67,6 +92,28 @@ function readProjects() {
     const entry = { path };
     if (agentModel) entry.agentModel = agentModel;
     if (dryRun) entry.dryRun = true;
+    const readOnly = row.querySelector(".read-only").checked;
+    const blockWhenLocked = row.querySelector(".block-lock").checked;
+    const maxRuntime = parseInt(row.querySelector(".max-runtime").value, 10) || 0;
+    const denyRaw = row.querySelector(".deny-patterns").value.trim();
+    const denyPatterns = denyRaw
+      ? denyRaw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      : [];
+    const guardrails = {};
+    if (readOnly) guardrails.readOnly = true;
+    if (!blockWhenLocked) guardrails.blockWhenLocked = false;
+    if (maxRuntime > 0) guardrails.maxRuntimeMinutes = maxRuntime;
+    if (denyPatterns.length) guardrails.denyPatterns = denyPatterns;
+    if (Object.keys(guardrails).length) entry.guardrails = guardrails;
+    const promptsRaw = row.querySelector(".prompts-json").value.trim();
+    if (promptsRaw) {
+      try {
+        const parsed = JSON.parse(promptsRaw);
+        if (parsed && typeof parsed === "object") entry.prompts = parsed;
+      } catch {
+        /* skip invalid JSON on save */
+      }
+    }
     out[alias] = entry;
   }
   return out;
@@ -155,6 +202,14 @@ function renderChecklist(checklist) {
       id: "check-paired",
       ok: checklist.paired,
       hint: "In Teams send the /pair code from above.",
+    },
+    {
+      id: "check-cli",
+      ok: checklist.diagnosis?.ok ?? checklist.agentFound,
+      hint:
+        checklist.diagnosis?.errors?.[0] ||
+        checklist.diagnosis?.warnings?.[0] ||
+        "Click Test CLI in Settings.",
     },
   ];
 
@@ -266,6 +321,13 @@ function fillForm(config) {
     config.agentModel ||
     (config.agentBackend === "codex" ? "gpt-5.4" : "auto");
   $("dryRun").checked = Boolean(config.dryRun);
+  $("blockTasksWhenLocked").checked = config.blockTasksWhenLocked !== false;
+  $("includeGitContext").checked = config.includeGitContext !== false;
+  $("approvalScreenshot").checked = Boolean(config.approvalScreenshot);
+  $("maxRuntimeMinutes").value = String(config.maxRuntimeMinutes || 0);
+  $("globalPrompts").value = config.prompts
+    ? JSON.stringify(config.prompts, null, 2)
+    : "";
   $("openAtLogin").checked = Boolean(config.openAtLogin);
   $("startMinimized").checked = config.startMinimized !== false;
   $("checkUpdates").checked = config.checkUpdates !== false;
@@ -276,7 +338,14 @@ function fillForm(config) {
     if (typeof entry === "string") {
       addProject(alias, entry);
     } else {
-      addProject(alias, entry.path || "", entry.agentModel || "", Boolean(entry.dryRun));
+      addProject(
+        alias,
+        entry.path || "",
+        entry.agentModel || "",
+        Boolean(entry.dryRun),
+        entry.guardrails || {},
+        entry.prompts || {},
+      );
     }
   }
   updateProjectsEmpty();
@@ -294,6 +363,15 @@ function fillForm(config) {
 function readForm() {
   const typed = $("workerToken").value.trim();
   const agentBackend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+  let prompts;
+  const promptsRaw = $("globalPrompts").value.trim();
+  if (promptsRaw) {
+    try {
+      prompts = JSON.parse(promptsRaw);
+    } catch {
+      throw new Error("Global prompt shortcuts must be valid JSON");
+    }
+  }
   return {
     relayUrl: $("relayUrl").value.trim(),
     workerToken: typed || savedToken,
@@ -305,6 +383,11 @@ function readForm() {
       $("agentModel").value.trim() ||
       (agentBackend === "codex" ? "gpt-5.4" : "auto"),
     dryRun: $("dryRun").checked,
+    blockTasksWhenLocked: $("blockTasksWhenLocked").checked,
+    includeGitContext: $("includeGitContext").checked,
+    approvalScreenshot: $("approvalScreenshot").checked,
+    maxRuntimeMinutes: parseInt($("maxRuntimeMinutes").value, 10) || 0,
+    prompts,
     openAtLogin: $("openAtLogin").checked,
     startMinimized: $("startMinimized").checked,
     checkUpdates: $("checkUpdates").checked,
@@ -406,6 +489,22 @@ async function boot() {
           : "Not found. Install Cursor Agent CLI, or paste the full path to agent.cmd.";
       showMsg("Agent CLI not found", true);
     }
+  });
+
+  $("test-agent").addEventListener("click", async () => {
+    const backend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+    const d = await window.agentr.diagnoseAgent($("agentCommand").value, backend);
+    const el = $("agent-diagnosis");
+    const lines = [
+      d.ok ? "OK" : "FAILED",
+      d.version ? `version: ${d.version}` : "",
+      d.command ? `command: ${d.command}` : "",
+      ...(d.errors || []).map((e) => `error: ${e}`),
+      ...(d.warnings || []).map((w) => `warn: ${w}`),
+    ].filter(Boolean);
+    el.textContent = lines.join("\n");
+    el.hidden = false;
+    showMsg(d.ok ? "CLI diagnosis passed" : "CLI diagnosis failed", !d.ok);
   });
 
   $("agentBackend").addEventListener("change", () => onBackendChange(true));

@@ -2,6 +2,8 @@ import {
   generatePairingCode,
   PROTOCOL_VERSION,
   safeParseRelayMessage,
+  type ResumeContext,
+  type ResumeMode,
   type ServerToWorker,
   type TaskFile,
   type WorkerToServer,
@@ -9,20 +11,32 @@ import {
 import { hostname as osHostname } from "node:os";
 import WebSocket from "ws";
 import type { WorkerConfig } from "./config.js";
-import { defaultModelForBackend, saveWorkerConfig } from "./config.js";
+import {
+  defaultModelForBackend,
+  projectPath,
+  resolveGuardrails,
+  resolveMaxRuntimeMinutes,
+  saveWorkerConfig,
+  type ProjectEntry,
+} from "./config.js";
 import { writeTaskInboxFiles } from "./inbox.js";
 import { preferResolvedAgentCommand } from "./resolve-agent.js";
 import { prepareForScreenshot } from "./display.js";
-import { projectPath, type ProjectEntry } from "./config.js";
 import { probeProjectDisks } from "./disk.js";
 import { readProjectFileForGet } from "./file-get.js";
-import { newApprovalId, TaskRunner } from "./runner.js";
+import { buildTaskSummary, newApprovalId, TaskRunner } from "./runner.js";
 import { captureAllDisplays } from "./screenshot.js";
 import { uploadScreenshotsHttps } from "./upload.js";
+import { getGitContext } from "./git-context.js";
+import {
+  saveTaskContext,
+  summarizeLogs,
+  type TaskContextEntry,
+} from "./task-context.js";
+import { diagnoseAgentCli, toCliDiagnosisSummary } from "./agent-diagnose.js";
 
 export type WorkerStatus = "offline" | "connecting" | "online" | "busy";
 
-/** Human-facing connection state for the tray. */
 export type ConnectionHint =
   | { kind: "ok"; detail?: string }
   | { kind: "connecting"; detail?: string }
@@ -39,27 +53,21 @@ export type ConnectionHint =
 export interface WorkerEvents {
   status: (status: WorkerStatus) => void;
   pairingCode: (code: string) => void;
-  /** Teams users paired on the relay (from server.ack). */
   pairedUsers: (count: number) => void;
-  /** Rich reconnect / re-pair messaging for the tray. */
   connection: (hint: ConnectionHint) => void;
   log: (line: string) => void;
   error: (err: Error) => void;
-  /** Fired when the relay rejects the worker token (no auto-reconnect). */
   unauthorized: (message: string) => void;
-  /** Task started on this PC — open local console. */
   taskStart: (info: {
     taskId: string;
     prompt: string;
     cwd: string;
   }) => void;
-  /** Live agent output chunk for local console + relay. */
   taskLog: (info: {
     taskId: string;
     stream: "stdout" | "stderr";
     chunk: string;
   }) => void;
-  /** Task finished. */
   taskEnd: (info: { taskId: string; exitCode: number }) => void;
 }
 
@@ -73,6 +81,9 @@ type QueuedTask = {
   projectAlias?: string;
   files?: TaskFile[];
   agentModel?: string;
+  conversationId?: string;
+  resumeMode?: ResumeMode;
+  resumeContext?: ResumeContext;
 };
 
 export class AgentRelayWorker {
@@ -92,11 +103,15 @@ export class AgentRelayWorker {
   private taskQueue: QueuedTask[] = [];
   private draining = false;
   private backoffMs = 1000;
+  private sessionLocked = false;
+  private lastDiagnosis = diagnoseAgentCli("agent", "cursor");
   private listeners: {
     [K in keyof WorkerEvents]?: Set<WorkerEvents[K]>;
   } = {};
 
-  constructor(private config: WorkerConfig) {}
+  constructor(private config: WorkerConfig) {
+    this.refreshDiagnosis();
+  }
 
   on<K extends keyof WorkerEvents>(event: K, fn: WorkerEvents[K]): () => void {
     if (!this.listeners[event]) {
@@ -131,8 +146,28 @@ export class AgentRelayWorker {
     return this.status;
   }
 
+  getSessionLocked(): boolean {
+    return this.sessionLocked;
+  }
+
+  getDiagnosis() {
+    return this.lastDiagnosis;
+  }
+
   updateConfig(config: WorkerConfig): void {
     this.config = config;
+    this.refreshDiagnosis();
+  }
+
+  updateSessionLock(locked: boolean): void {
+    this.sessionLocked = locked;
+  }
+
+  refreshDiagnosis() {
+    this.lastDiagnosis = diagnoseAgentCli(
+      this.config.agentCommand,
+      this.config.agentBackend,
+    );
   }
 
   start(): void {
@@ -208,6 +243,43 @@ export class AgentRelayWorker {
     this.emit("status", status);
   }
 
+  private buildProjectMeta() {
+    return Object.entries(this.config.projects).map(([alias, entry]) => ({
+      alias,
+      prompts: entry.prompts,
+      guardrails: entry.guardrails,
+    }));
+  }
+
+  private buildHello(): WorkerToServer {
+    const running = [...this.runners.keys()][0];
+    const queued = this.taskQueue.map((t) => t.taskId);
+    return {
+      type: "worker.hello",
+      hostname: osHostname(),
+      version: PROTOCOL_VERSION,
+      repos: Object.keys(this.config.projects),
+      pairingCode: this.pairingCode,
+      agentModel: this.config.agentModel || "auto",
+      agentBackend: this.config.agentBackend,
+      sessionLocked: this.sessionLocked,
+      queueDepth: this.runners.size + this.taskQueue.length,
+      queueTaskIds: running ? [running, ...queued] : queued,
+      cliDiagnosis: toCliDiagnosisSummary(this.lastDiagnosis),
+      globalPrompts: this.config.prompts,
+      projectMeta: this.buildProjectMeta(),
+    };
+  }
+
+  private sendQueueSnapshot(): void {
+    const running = [...this.runners.keys()][0];
+    this.send({
+      type: "worker.queue",
+      runningTaskId: running,
+      queuedTaskIds: this.taskQueue.map((t) => t.taskId),
+    });
+  }
+
   private connect(): void {
     if (this.stopped || this.authBlocked) return;
     const token = this.config.workerToken.trim();
@@ -224,7 +296,6 @@ export class AgentRelayWorker {
     this.setConnection({ kind: "connecting", detail: "Dialing the relay…" });
     this.emit("log", `Connecting to ${this.config.relayUrl}…`);
 
-    // Put token in query as well — some proxies drop Authorization on WS upgrade
     let wsUrl = this.config.relayUrl;
     try {
       const u = new URL(this.config.relayUrl);
@@ -249,25 +320,14 @@ export class AgentRelayWorker {
       this.backoffMs = 1000;
       this.reconnectAttempt = 0;
       this.setStatus(this.runners.size > 0 ? "busy" : "online");
-      this.emit(
-        "log",
-        recovered
-          ? "Reconnected to relay"
-          : "Connected",
-      );
+      this.emit("log", recovered ? "Reconnected to relay" : "Connected");
       this.emit("pairingCode", this.pairingCode);
       this.setConnection({
         kind: "ok",
         detail: recovered ? "Reconnected after relay drop" : undefined,
       });
-      this.send({
-        type: "worker.hello",
-        hostname: osHostname(),
-        version: PROTOCOL_VERSION,
-        repos: Object.keys(this.config.projects),
-        pairingCode: this.pairingCode,
-        agentModel: this.config.agentModel || "auto",
-      });
+      this.send(this.buildHello());
+      this.sendQueueSnapshot();
     });
 
     ws.on("message", (raw) => {
@@ -382,6 +442,12 @@ export class AgentRelayWorker {
           requestId: msg.requestId,
           sentAt: msg.sentAt,
           projects: probeProjectDisks(this.config.projects),
+          sessionLocked: this.sessionLocked,
+          queueDepth: this.runners.size + this.taskQueue.length,
+          queueTaskIds: [
+            ...this.runners.keys(),
+            ...this.taskQueue.map((t) => t.taskId),
+          ],
         });
         break;
       case "task.create":
@@ -391,6 +457,9 @@ export class AgentRelayWorker {
           projectAlias: msg.projectAlias,
           files: msg.files,
           agentModel: msg.agentModel,
+          conversationId: msg.conversation.conversationId,
+          resumeMode: msg.resumeMode,
+          resumeContext: msg.resumeContext,
         });
         break;
       case "worker.set_config":
@@ -439,6 +508,7 @@ export class AgentRelayWorker {
             message: "Cancelled while queued",
           });
           this.reannounceQueue();
+          this.sendQueueSnapshot();
           break;
         }
         const runner = this.runners.get(msg.taskId);
@@ -469,6 +539,7 @@ export class AgentRelayWorker {
       });
       this.setStatus("busy");
     }
+    this.sendQueueSnapshot();
     void this.drainQueue();
   }
 
@@ -492,6 +563,7 @@ export class AgentRelayWorker {
         const next = this.taskQueue.shift();
         if (!next) break;
         this.reannounceQueue();
+        this.sendQueueSnapshot();
         await this.runTask(next);
       }
     } finally {
@@ -501,6 +573,7 @@ export class AgentRelayWorker {
       } else if (this.ws && this.runners.size === 0) {
         this.setStatus("online");
       }
+      this.sendQueueSnapshot();
     }
   }
 
@@ -512,17 +585,37 @@ export class AgentRelayWorker {
     return this.config.projects[projectAlias] ?? null;
   }
 
+  private isLockedBlocked(project?: ProjectEntry | null): boolean {
+    if (project?.guardrails?.blockWhenLocked) return this.sessionLocked;
+    if (this.config.blockTasksWhenLocked !== false && this.sessionLocked) {
+      return true;
+    }
+    return false;
+  }
+
   private async runTask(task: QueuedTask): Promise<void> {
-    const { taskId, projectAlias, files, agentModel } = task;
+    const { taskId, projectAlias, files, agentModel, conversationId } = task;
     let { prompt } = task;
     const project = this.resolveProject(projectAlias);
     const cwd = project ? projectPath(project) : null;
+
     if (!cwd) {
       this.send({
         type: "task.status",
         taskId,
         status: "failed",
         message: `Unknown project alias: ${projectAlias}`,
+      });
+      return;
+    }
+
+    if (this.isLockedBlocked(project)) {
+      this.send({
+        type: "task.status",
+        taskId,
+        status: "failed",
+        message:
+          "Windows session is locked. Unlock the PC, then retry your task.",
       });
       return;
     }
@@ -544,6 +637,13 @@ export class AgentRelayWorker {
       }
     }
 
+    if (this.config.includeGitContext !== false) {
+      const gitCtx = getGitContext(cwd);
+      if (gitCtx) {
+        prompt = `## Git context\n${gitCtx.summary}\n\n${prompt}`;
+      }
+    }
+
     const fallbackModel = defaultModelForBackend(this.config.agentBackend);
     const model =
       (agentModel ||
@@ -551,10 +651,18 @@ export class AgentRelayWorker {
         this.config.agentModel ||
         fallbackModel
       ).trim() || fallbackModel;
+    const guardrails = resolveGuardrails(this.config, project ?? undefined);
     const dryRun =
-      typeof project?.dryRun === "boolean"
+      guardrails?.readOnly ||
+      (typeof project?.dryRun === "boolean"
         ? project.dryRun
-        : this.config.dryRun;
+        : this.config.dryRun);
+    const maxRuntimeMinutes = resolveMaxRuntimeMinutes(
+      this.config,
+      project ?? undefined,
+    );
+
+    const gitCtx = getGitContext(cwd);
 
     this.setStatus("busy");
     this.send({ type: "task.status", taskId, status: "running" });
@@ -563,7 +671,9 @@ export class AgentRelayWorker {
     const runner = new TaskRunner();
     this.runners.set(taskId, runner);
 
-    const exitCode = await runner.run({
+    let capturedThreadId: string | undefined;
+
+    const result = await runner.run({
       taskId,
       prompt,
       cwd,
@@ -574,6 +684,13 @@ export class AgentRelayWorker {
       ),
       agentModel: model,
       dryRun,
+      guardrails,
+      maxRuntimeMinutes,
+      resumeMode: task.resumeMode,
+      resumeContext: task.resumeContext,
+      onAgentThreadId: (id) => {
+        capturedThreadId = id;
+      },
       onLog: (stream, chunk) => {
         this.emit("taskLog", { taskId, stream, chunk });
         this.send({
@@ -584,14 +701,47 @@ export class AgentRelayWorker {
           ts: Date.now(),
         });
       },
-      requestApproval: (command, reason) => {
+      requestApproval: async (command, reason) => {
         const approvalId = newApprovalId();
+        let screenshotUrl: string | undefined;
+
+        if (this.config.approvalScreenshot) {
+          try {
+            const display = await prepareForScreenshot();
+            if (!display.locked) {
+              const screens = await captureAllDisplays("preview");
+              const upload = await uploadScreenshotsHttps({
+                relayUrl: this.config.relayUrl,
+                workerToken: this.config.workerToken,
+                taskId: approvalId,
+                screenshots: screens.map((s) => ({
+                  name: s.name,
+                  mimeType: s.mimeType,
+                  label: s.label,
+                  buffer: s.buffer,
+                })),
+                tlsInsecure: this.config.tlsInsecure,
+              });
+              if (upload.ok && upload.urls?.[0]) {
+                screenshotUrl = upload.urls[0];
+              }
+            }
+          } catch {
+            /* optional screenshot */
+          }
+        }
+
         this.send({
           type: "task.approval_request",
           taskId,
           approvalId,
           command,
           reason,
+          projectAlias,
+          cwd,
+          gitBranch: gitCtx?.branch,
+          gitDirty: gitCtx?.dirty,
+          screenshotUrl,
         });
         return new Promise<boolean>((resolve) => {
           this.pendingApprovals.set(approvalId, { resolve });
@@ -606,7 +756,25 @@ export class AgentRelayWorker {
     });
 
     this.runners.delete(taskId);
+    const exitCode = result.exitCode;
+    const agentThreadId = result.agentThreadId ?? capturedThreadId;
+    const summary = buildTaskSummary(result.logText, exitCode);
+
     this.emit("taskEnd", { taskId, exitCode: exitCode ?? 1 });
+
+    if (conversationId) {
+      const ctxEntry: TaskContextEntry = {
+        taskId,
+        conversationId,
+        projectAlias,
+        agentThreadId,
+        prompt: task.prompt,
+        logSummary: summarizeLogs([result.logText]),
+        exitCode,
+        finishedAt: Date.now(),
+      };
+      saveTaskContext(ctxEntry);
+    }
 
     this.send({
       type: "task.status",
@@ -624,6 +792,8 @@ export class AgentRelayWorker {
           : exitCode === 130
             ? "Cancelled"
             : `Exited with code ${exitCode}`,
+      summary,
+      agentThreadId,
     });
 
     if (this.ws && this.taskQueue.length === 0 && this.runners.size === 0) {

@@ -1,4 +1,9 @@
-import type { ConversationRef, TaskStatus } from "@agentr/shared";
+import type {
+  CliDiagnosisSummary,
+  ConversationRef,
+  ProjectMeta,
+  TaskStatus,
+} from "@agentr/shared";
 import { generatePairingCode } from "@agentr/shared";
 import {
   existsSync,
@@ -26,13 +31,26 @@ export interface TaskRecord {
   logs: string[];
   artifacts: TaskArtifactMeta[];
   createdAt: number;
-  /** Adaptive Card activity id (updated in place). */
   activityId?: string;
-  /** User message that started the task (thread root). */
   rootActivityId?: string;
   exitCode?: number;
-  /** How many log characters already posted as thread replies. */
   flushedLogChars?: number;
+  parentTaskId?: string;
+  agentThreadId?: string;
+  summary?: string;
+}
+
+export interface TaskHistoryEntry {
+  taskId: string;
+  threadId: string;
+  prompt: string;
+  projectAlias?: string;
+  status: TaskStatus;
+  exitCode?: number;
+  summary?: string;
+  agentThreadId?: string;
+  createdAt: number;
+  finishedAt?: number;
 }
 
 export interface WorkerConnection {
@@ -42,26 +60,45 @@ export interface WorkerConnection {
   repos: string[];
   connectedAt: number;
   agentModel?: string;
+  agentBackend?: "cursor" | "codex";
+  sessionLocked?: boolean;
+  queueDepth?: number;
+  queueTaskIds?: string[];
+  runningTaskId?: string;
+  cliDiagnosis?: CliDiagnosisSummary;
+  globalPrompts?: Record<string, string>;
+  projectMeta?: ProjectMeta[];
+  lastPongAt?: number;
 }
 
 interface PersistedSession {
   pairedUserIds: string[];
 }
 
+interface PersistedHistory {
+  byConversation: Record<string, TaskHistoryEntry[]>;
+}
+
+const MAX_HISTORY_PER_CONVERSATION = 50;
+
 export class SessionStore {
   pairedUserIds = new Set<string>();
   pairingCode: string = generatePairingCode();
   worker: WorkerConnection | null = null;
+  workerDisconnectedAt: number | null = null;
+  lastWorkerHostname: string | null = null;
   tasks = new Map<string, TaskRecord>();
-  /** approvalId → taskId */
   pendingApprovals = new Map<string, string>();
-  /** conversationId → latest agent taskId (for /cancel) */
   activeTaskByConversation = new Map<string, string>();
-  /** conversationId → last finished agent task (for /last) */
   lastTaskByConversation = new Map<string, string>();
+  private historyByConversation = new Map<string, TaskHistoryEntry[]>();
 
-  constructor(private readonly persistPath?: string) {
+  constructor(
+    private readonly persistPath?: string,
+    private readonly historyPath?: string,
+  ) {
     this.load();
+    this.loadHistory();
   }
 
   rotatePairingCode(): string {
@@ -71,6 +108,10 @@ export class SessionStore {
 
   isPaired(userId: string): boolean {
     return this.pairedUserIds.has(userId);
+  }
+
+  getPairedUserIds(): string[] {
+    return [...this.pairedUserIds];
   }
 
   pair(userId: string, code: string): boolean {
@@ -90,6 +131,7 @@ export class SessionStore {
   }
 
   setWorker(conn: WorkerConnection): void {
+    const wasOffline = !this.worker;
     if (this.worker && this.worker.socket !== conn.socket) {
       try {
         this.worker.socket.close(4000, "replaced by new worker");
@@ -98,12 +140,37 @@ export class SessionStore {
       }
     }
     this.worker = conn;
+    this.workerDisconnectedAt = null;
+    this.lastWorkerHostname = conn.hostname;
+    conn.connectedAt = conn.connectedAt || Date.now();
+    if (wasOffline) {
+      (conn as WorkerConnection & { justConnected?: boolean }).justConnected = true;
+    }
   }
 
   clearWorker(socket: WebSocket): void {
     if (this.worker?.socket === socket) {
+      this.lastWorkerHostname = this.worker.hostname;
+      this.workerDisconnectedAt = Date.now();
       this.worker = null;
     }
+  }
+
+  consumeWorkerJustConnected(): boolean {
+    const w = this.worker as WorkerConnection & { justConnected?: boolean } | null;
+    if (w?.justConnected) {
+      delete w.justConnected;
+      return true;
+    }
+    return false;
+  }
+
+  updateWorkerQueue(runningTaskId?: string, queuedTaskIds?: string[]): void {
+    if (!this.worker) return;
+    this.worker.runningTaskId = runningTaskId;
+    this.worker.queueTaskIds = queuedTaskIds ?? [];
+    this.worker.queueDepth =
+      (runningTaskId ? 1 : 0) + (queuedTaskIds?.length ?? 0);
   }
 
   getWorker(): WorkerConnection | null {
@@ -124,7 +191,6 @@ export class SessionStore {
       flushedLogChars: 0,
     };
     this.tasks.set(record.taskId, record);
-    // Track agent tasks for /cancel (not screenshot-only requests).
     if (partial.prompt !== "Desktop screenshots") {
       this.activeTaskByConversation.set(partial.threadId, record.taskId);
     }
@@ -170,6 +236,11 @@ export class SessionStore {
     return latest;
   }
 
+  getTaskHistory(conversationId: string, limit = 10): TaskHistoryEntry[] {
+    const list = this.historyByConversation.get(conversationId) ?? [];
+    return list.slice(0, Math.min(limit, MAX_HISTORY_PER_CONVERSATION));
+  }
+
   addArtifact(taskId: string, artifact: TaskArtifactMeta): TaskRecord | undefined {
     const task = this.tasks.get(taskId);
     if (!task) return undefined;
@@ -191,11 +262,16 @@ export class SessionStore {
     taskId: string,
     status: TaskStatus,
     exitCode?: number,
+    summary?: string,
+    agentThreadId?: string,
   ): TaskRecord | undefined {
     const task = this.tasks.get(taskId);
     if (!task) return undefined;
     task.status = status;
     if (typeof exitCode === "number") task.exitCode = exitCode;
+    if (summary) task.summary = summary;
+    if (agentThreadId) task.agentThreadId = agentThreadId;
+
     if (status !== "running" && status !== "queued") {
       const active = this.activeTaskByConversation.get(task.threadId);
       if (active === taskId) {
@@ -203,9 +279,61 @@ export class SessionStore {
       }
       if (task.prompt !== "Desktop screenshots") {
         this.lastTaskByConversation.set(task.threadId, taskId);
+        this.pushHistory(task);
       }
     }
     return task;
+  }
+
+  private pushHistory(task: TaskRecord): void {
+    const entry: TaskHistoryEntry = {
+      taskId: task.taskId,
+      threadId: task.threadId,
+      prompt: task.prompt,
+      projectAlias: task.projectAlias,
+      status: task.status,
+      exitCode: task.exitCode,
+      summary: task.summary,
+      agentThreadId: task.agentThreadId,
+      createdAt: task.createdAt,
+      finishedAt: Date.now(),
+    };
+    const list = this.historyByConversation.get(task.threadId) ?? [];
+    list.unshift(entry);
+    if (list.length > MAX_HISTORY_PER_CONVERSATION) {
+      list.length = MAX_HISTORY_PER_CONVERSATION;
+    }
+    this.historyByConversation.set(task.threadId, list);
+    this.saveHistory();
+  }
+
+  resolvePromptTemplate(
+    alias: string,
+    name: string,
+  ): string | undefined {
+    const worker = this.worker;
+    if (!worker) return undefined;
+    const project = worker.projectMeta?.find((p) => p.alias === alias);
+    if (project?.prompts?.[name]) return project.prompts[name];
+    return worker.globalPrompts?.[name];
+  }
+
+  listPromptTemplates(): Array<{ alias?: string; name: string; text: string }> {
+    const worker = this.worker;
+    if (!worker) return [];
+    const out: Array<{ alias?: string; name: string; text: string }> = [];
+    if (worker.globalPrompts) {
+      for (const [name, text] of Object.entries(worker.globalPrompts)) {
+        out.push({ name, text });
+      }
+    }
+    for (const pm of worker.projectMeta ?? []) {
+      if (!pm.prompts) continue;
+      for (const [name, text] of Object.entries(pm.prompts)) {
+        out.push({ alias: pm.alias, name, text });
+      }
+    }
+    return out;
   }
 
   private load(): void {
@@ -236,8 +364,47 @@ export class SessionStore {
       console.warn("[store] failed to save session persistence", err);
     }
   }
+
+  private loadHistory(): void {
+    if (!this.historyPath || !existsSync(this.historyPath)) return;
+    try {
+      const raw = JSON.parse(
+        readFileSync(this.historyPath, "utf8"),
+      ) as PersistedHistory;
+      if (raw.byConversation && typeof raw.byConversation === "object") {
+        for (const [cid, entries] of Object.entries(raw.byConversation)) {
+          if (Array.isArray(entries)) {
+            this.historyByConversation.set(cid, entries);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[store] failed to load task history", err);
+    }
+  }
+
+  private saveHistory(): void {
+    if (!this.historyPath) return;
+    try {
+      mkdirSync(dirname(this.historyPath), { recursive: true });
+      const byConversation: Record<string, TaskHistoryEntry[]> = {};
+      for (const [cid, entries] of this.historyByConversation) {
+        byConversation[cid] = entries;
+      }
+      writeFileSync(
+        this.historyPath,
+        JSON.stringify({ byConversation }, null, 2) + "\n",
+      );
+    } catch (err) {
+      console.warn("[store] failed to save task history", err);
+    }
+  }
 }
 
 export function defaultSessionPath(dataDir: string): string {
   return join(dataDir, "session.json");
+}
+
+export function defaultHistoryPath(dataDir: string): string {
+  return join(dataDir, "task-history.json");
 }

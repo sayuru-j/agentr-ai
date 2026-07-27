@@ -6,7 +6,7 @@ import { ArtifactStore } from "./artifacts.js";
 import { requireWorkerToken } from "./auth-http.js";
 import { AgentRelayBot } from "./bot.js";
 import { loadConfig } from "./config.js";
-import { SessionStore, defaultSessionPath } from "./store.js";
+import { SessionStore, defaultSessionPath, defaultHistoryPath } from "./store.js";
 import { WorkerHub } from "./ws-hub.js";
 
 async function main(): Promise<void> {
@@ -25,30 +25,56 @@ async function main(): Promise<void> {
     );
   }
 
-  const store = new SessionStore(defaultSessionPath(config.dataDir));
+  const store = new SessionStore(
+    defaultSessionPath(config.dataDir),
+    defaultHistoryPath(config.dataDir),
+  );
   console.log(`[server] Session data: ${config.dataDir}`);
   const artifacts = new ArtifactStore(config.publicBaseUrl);
   artifacts.cleanup();
   const hub = new WorkerHub(config, store);
   const bot = new AgentRelayBot(config, store, hub, artifacts);
 
+  hub.setDisconnectHandler((hostname) => {
+    void bot.onWorkerDisconnect(hostname);
+  });
+
   hub.setMessageHandler((msg, socket) => {
     switch (msg.type) {
       case "worker.hello":
         void bot.onWorkerHello(
-          msg.hostname,
-          msg.version,
-          msg.repos,
+          {
+            hostname: msg.hostname,
+            version: msg.version,
+            repos: msg.repos,
+            pairingCode: msg.pairingCode,
+            agentModel: msg.agentModel,
+            agentBackend: msg.agentBackend,
+            sessionLocked: msg.sessionLocked,
+            queueDepth: msg.queueDepth,
+            queueTaskIds: msg.queueTaskIds,
+            cliDiagnosis: msg.cliDiagnosis,
+            globalPrompts: msg.globalPrompts,
+            projectMeta: msg.projectMeta,
+          },
           socket,
-          msg.pairingCode,
-          msg.agentModel,
         );
+        break;
+      case "worker.queue":
+        bot.onWorkerQueue(msg.runningTaskId, msg.queuedTaskIds);
         break;
       case "worker.config":
         bot.onWorkerConfig(msg.agentModel);
         break;
       case "worker.pong":
-        bot.onWorkerPong(msg.requestId, msg.sentAt, msg.projects);
+        bot.onWorkerPong(
+          msg.requestId,
+          msg.sentAt,
+          msg.projects,
+          msg.sessionLocked,
+          msg.queueDepth,
+          msg.queueTaskIds,
+        );
         break;
       case "file.result":
         bot.onFileResult(msg);
@@ -65,6 +91,13 @@ async function main(): Promise<void> {
           msg.approvalId,
           msg.command,
           msg.reason,
+          {
+            projectAlias: msg.projectAlias,
+            cwd: msg.cwd,
+            gitBranch: msg.gitBranch,
+            gitDirty: msg.gitDirty,
+            screenshotUrl: msg.screenshotUrl,
+          },
         );
         break;
       case "task.status":
@@ -74,6 +107,8 @@ async function main(): Promise<void> {
           msg.message,
           msg.exitCode,
           msg.queuePosition,
+          msg.summary,
+          msg.agentThreadId,
         );
         break;
     }

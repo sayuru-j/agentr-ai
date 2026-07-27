@@ -1,3 +1,4 @@
+import type { ProjectGuardrails } from "@agentr/shared";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
@@ -12,6 +13,9 @@ export interface ProjectEntry {
   agentModel?: string;
   /** Override global dryRun when set (true/false). */
   dryRun?: boolean;
+  /** Per-project prompt shortcuts for `!alias /run name`. */
+  prompts?: Record<string, string>;
+  guardrails?: ProjectGuardrails;
 }
 
 export interface WorkerConfig {
@@ -34,6 +38,16 @@ export interface WorkerConfig {
   startMinimized?: boolean;
   /** Check GitHub Releases for a newer portable build. */
   checkUpdates?: boolean;
+  /** Reject new tasks when Windows session is locked. */
+  blockTasksWhenLocked?: boolean;
+  /** Prepend git branch/status to agent prompts. */
+  includeGitContext?: boolean;
+  /** Global max runtime in minutes (0 = off). Overridable per project. */
+  maxRuntimeMinutes?: number;
+  /** Capture desktop screenshot when approval is requested. */
+  approvalScreenshot?: boolean;
+  /** Global prompt shortcuts for `!alias /run name`. */
+  prompts?: Record<string, string>;
 }
 
 export const DEFAULT_CONFIG_DIR = join(homedir(), ".agent-relay");
@@ -63,6 +77,32 @@ function stripOuterQuotes(value: string): string {
   return t;
 }
 
+function coerceGuardrails(raw: unknown): ProjectGuardrails | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const g = raw as Record<string, unknown>;
+  const out: ProjectGuardrails = {};
+  if (typeof g.readOnly === "boolean") out.readOnly = g.readOnly;
+  if (typeof g.requireApproval === "boolean") out.requireApproval = g.requireApproval;
+  if (typeof g.maxRuntimeMinutes === "number") out.maxRuntimeMinutes = g.maxRuntimeMinutes;
+  if (typeof g.blockWhenLocked === "boolean") out.blockWhenLocked = g.blockWhenLocked;
+  if (Array.isArray(g.denyPatterns)) {
+    out.denyPatterns = g.denyPatterns.filter((x) => typeof x === "string");
+  }
+  if (Array.isArray(g.allowPatterns)) {
+    out.allowPatterns = g.allowPatterns.filter((x) => typeof x === "string");
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function coercePrompts(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "string" && k.trim()) out[k.trim()] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function defaultConfig(): WorkerConfig {
   return {
     relayUrl: "wss://agent.example.com/ws",
@@ -75,6 +115,10 @@ export function defaultConfig(): WorkerConfig {
     openAtLogin: false,
     startMinimized: true,
     checkUpdates: true,
+    blockTasksWhenLocked: true,
+    includeGitContext: true,
+    maxRuntimeMinutes: 0,
+    approvalScreenshot: false,
   };
 }
 
@@ -98,6 +142,8 @@ export function coerceProjects(
         path?: unknown;
         agentModel?: unknown;
         dryRun?: unknown;
+        prompts?: unknown;
+        guardrails?: unknown;
       };
       const path = String(v.path ?? "").trim();
       if (!path) continue;
@@ -106,6 +152,10 @@ export function coerceProjects(
         entry.agentModel = v.agentModel.trim();
       }
       if (typeof v.dryRun === "boolean") entry.dryRun = v.dryRun;
+      const prompts = coercePrompts(v.prompts);
+      if (prompts) entry.prompts = prompts;
+      const guardrails = coerceGuardrails(v.guardrails);
+      if (guardrails) entry.guardrails = guardrails;
       out[key] = entry;
     }
   }
@@ -146,6 +196,19 @@ export function loadWorkerConfig(path = DEFAULT_CONFIG_PATH): WorkerConfig {
     checkUpdates: Boolean(
       raw.checkUpdates !== undefined ? raw.checkUpdates : base.checkUpdates,
     ),
+    blockTasksWhenLocked: Boolean(
+      raw.blockTasksWhenLocked !== undefined
+        ? raw.blockTasksWhenLocked
+        : base.blockTasksWhenLocked,
+    ),
+    includeGitContext: Boolean(
+      raw.includeGitContext !== undefined
+        ? raw.includeGitContext
+        : base.includeGitContext,
+    ),
+    maxRuntimeMinutes: Number(raw.maxRuntimeMinutes ?? base.maxRuntimeMinutes) || 0,
+    approvalScreenshot: Boolean(raw.approvalScreenshot ?? base.approvalScreenshot),
+    prompts: coercePrompts(raw.prompts) ?? base.prompts,
     projects: coerceProjects(raw.projects),
   };
 }
@@ -160,6 +223,12 @@ export function saveWorkerConfig(
     const cleaned: ProjectEntry = { path: entry.path };
     if (entry.agentModel?.trim()) cleaned.agentModel = entry.agentModel.trim();
     if (typeof entry.dryRun === "boolean") cleaned.dryRun = entry.dryRun;
+    if (entry.prompts && Object.keys(entry.prompts).length > 0) {
+      cleaned.prompts = entry.prompts;
+    }
+    if (entry.guardrails && Object.keys(entry.guardrails).length > 0) {
+      cleaned.guardrails = entry.guardrails;
+    }
     projects[alias] = cleaned;
   }
   const agentBackend = parseAgentBackend(config.agentBackend);
@@ -178,6 +247,11 @@ export function saveWorkerConfig(
     openAtLogin: Boolean(config.openAtLogin),
     startMinimized: Boolean(config.startMinimized),
     checkUpdates: Boolean(config.checkUpdates),
+    blockTasksWhenLocked: Boolean(config.blockTasksWhenLocked),
+    includeGitContext: Boolean(config.includeGitContext),
+    maxRuntimeMinutes: Number(config.maxRuntimeMinutes) || 0,
+    approvalScreenshot: Boolean(config.approvalScreenshot),
+    prompts: config.prompts,
     projects,
   };
   writeFileSync(path, JSON.stringify(cleaned, null, 2) + "\n", "utf8");
@@ -186,4 +260,25 @@ export function saveWorkerConfig(
 export function ensureConfigDir(): string {
   mkdirSync(DEFAULT_CONFIG_DIR, { recursive: true });
   return DEFAULT_CONFIG_DIR;
+}
+
+/** Resolve effective guardrails for a project. */
+export function resolveGuardrails(
+  _config: WorkerConfig,
+  project?: ProjectEntry,
+): ProjectGuardrails | undefined {
+  const g = project?.guardrails;
+  if (!g) return undefined;
+  return { ...g };
+}
+
+/** Resolve max runtime minutes (project override > global). */
+export function resolveMaxRuntimeMinutes(
+  config: WorkerConfig,
+  project?: ProjectEntry,
+): number {
+  if (project?.guardrails?.maxRuntimeMinutes) {
+    return project.guardrails.maxRuntimeMinutes;
+  }
+  return config.maxRuntimeMinutes ?? 0;
 }

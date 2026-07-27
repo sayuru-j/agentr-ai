@@ -1,5 +1,10 @@
-import { matchRiskCommand } from "@agentr/shared";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  matchRiskWithGuardrails,
+  type ProjectGuardrails,
+  type ResumeContext,
+  type ResumeMode,
+} from "@agentr/shared";
+import { spawn, type ChildProcessWithoutNullStreams, execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import {
@@ -7,7 +12,9 @@ import {
   defaultModelForBackend,
   parseAgentBackend,
 } from "./config.js";
-import { buildCodexExecArgs } from "./codex-cli.js";
+import { buildCodexExecArgs, detectCodexCliProfile } from "./codex-cli.js";
+import { detectResumeSupport } from "./agent-diagnose.js";
+import { buildResumePrompt } from "./task-context.js";
 import { stripConfiguredCommand } from "./resolve-agent.js";
 
 export interface RunTaskOptions {
@@ -15,24 +22,32 @@ export interface RunTaskOptions {
   prompt: string;
   cwd: string;
   agentCommand: string;
-  /** `cursor` (default) or `codex`. */
   agentBackend?: AgentBackend | string;
-  /** Model id for the selected backend. */
   agentModel?: string;
   dryRun?: boolean;
-  requestApproval: (command: string, reason: string) => Promise<boolean>;
+  guardrails?: ProjectGuardrails;
+  maxRuntimeMinutes?: number;
+  resumeMode?: ResumeMode;
+  resumeContext?: ResumeContext;
+  requestApproval: (
+    command: string,
+    reason: string,
+    tier: "block" | "approve",
+  ) => Promise<boolean>;
   onLog: (stream: "stdout" | "stderr", chunk: string) => void;
+  onAgentThreadId?: (threadId: string) => void;
 }
 
 export interface TaskRunnerEvents {
   exit: [code: number | null];
 }
 
-/**
- * On Windows, `spawn(..., { shell: true })` builds a cmd.exe line and does not
- * escape spaces — paths like `C:\Users\Sayuru at Fleximal\...\agent.cmd` get
- * truncated unless double-quoted (portable + installed).
- */
+export interface TaskRunResult {
+  exitCode: number;
+  agentThreadId?: string;
+  logText: string;
+}
+
 function quoteWinCmdArg(arg: string): string {
   const trimmed = arg.trim();
   if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
@@ -42,7 +57,6 @@ function quoteWinCmdArg(arg: string): string {
   return `"${trimmed.replace(/"/g, '""')}"`;
 }
 
-/** Spawn agent CLI. On Windows use `shell: true` + quoted args (not `cmd /c`). */
 function spawnAgentProcess(
   agentCommand: string,
   args: string[],
@@ -72,10 +86,28 @@ type LineDecoder = {
   flush(): string[];
 };
 
-/** Extract human-readable text from Cursor CLI `--output-format stream-json` lines. */
+function readAgentHelp(agentCommand: string, backend: AgentBackend): string {
+  const cmd = stripConfiguredCommand(agentCommand);
+  const isAbsolute = /[\\/]/.test(cmd) || /^[a-zA-Z]:/.test(cmd);
+  const args = backend === "codex" ? ["exec", "--help"] : ["--help"];
+  try {
+    return execFileSync(cmd, args, {
+      encoding: "utf8",
+      timeout: 8000,
+      windowsHide: true,
+      shell: process.platform === "win32" && !isAbsolute,
+    });
+  } catch {
+    return "";
+  }
+}
+
 class CursorStreamJsonDecoder implements LineDecoder {
   private buffer = "";
   private seenPartial = false;
+  private sessionId: string | undefined;
+
+  constructor(private onSessionId?: (id: string) => void) {}
 
   push(chunk: string): string[] {
     this.buffer += chunk;
@@ -94,6 +126,10 @@ class CursorStreamJsonDecoder implements LineDecoder {
     const text = this.decodeLine(this.buffer);
     this.buffer = "";
     return text ? [text] : [];
+  }
+
+  getSessionId(): string | undefined {
+    return this.sessionId;
   }
 
   private decodeLine(line: string): string | null {
@@ -117,6 +153,13 @@ class CursorStreamJsonDecoder implements LineDecoder {
   get hasSeenPartial(): boolean {
     return this.seenPartial;
   }
+
+  captureSessionId(id: string): void {
+    if (!this.sessionId) {
+      this.sessionId = id;
+      this.onSessionId?.(id);
+    }
+  }
 }
 
 function formatCursorStreamEvent(
@@ -126,6 +169,8 @@ function formatCursorStreamEvent(
   const type = ev.type;
   if (type === "system" && ev.subtype === "init") {
     const model = String(ev.model ?? "?");
+    const sid = ev.session_id ?? ev.conversation_id ?? ev.thread_id;
+    if (typeof sid === "string") decoder.captureSessionId(sid);
     return `[agent] ${model}\n`;
   }
   if (type === "assistant") {
@@ -156,9 +201,11 @@ function formatCursorStreamEvent(
   return null;
 }
 
-/** Extract readable text from Codex CLI `codex exec --json` JSONL events. */
 class CodexJsonlDecoder implements LineDecoder {
   private buffer = "";
+  private threadId: string | undefined;
+
+  constructor(private onThreadId?: (id: string) => void) {}
 
   push(chunk: string): string[] {
     this.buffer += chunk;
@@ -179,6 +226,10 @@ class CodexJsonlDecoder implements LineDecoder {
     return text ? [text] : [];
   }
 
+  getThreadId(): string | undefined {
+    return this.threadId;
+  }
+
   private decodeLine(line: string): string | null {
     const trimmed = line.trim();
     if (!trimmed) return null;
@@ -187,9 +238,16 @@ class CodexJsonlDecoder implements LineDecoder {
     }
     try {
       const ev = JSON.parse(trimmed) as Record<string, unknown>;
-      return formatCodexEvent(ev);
+      return formatCodexEvent(ev, this);
     } catch {
       return `${line}\n`;
+    }
+  }
+
+  captureThreadId(id: string): void {
+    if (!this.threadId) {
+      this.threadId = id;
+      this.onThreadId?.(id);
     }
   }
 }
@@ -201,11 +259,15 @@ function pickText(...values: unknown[]): string | null {
   return null;
 }
 
-function formatCodexEvent(ev: Record<string, unknown>): string | null {
+function formatCodexEvent(
+  ev: Record<string, unknown>,
+  decoder: CodexJsonlDecoder,
+): string | null {
   const type = String(ev.type ?? "");
 
   if (type === "thread.started") {
     const id = pickText(ev.thread_id, ev.id);
+    if (id) decoder.captureThreadId(id);
     return id ? `[codex] thread ${id}\n` : `[codex] started\n`;
   }
   if (type === "turn.started") return `[codex] turn…\n`;
@@ -261,19 +323,26 @@ function formatCodexEvent(ev: Record<string, unknown>): string | null {
     }
   }
 
-  // Some builds nest the payload under `data`.
   if (ev.data && typeof ev.data === "object") {
-    return formatCodexEvent({
-      ...(ev.data as Record<string, unknown>),
-      type: (ev.data as { type?: unknown }).type ?? type,
-    });
+    return formatCodexEvent(
+      {
+        ...(ev.data as Record<string, unknown>),
+        type: (ev.data as { type?: unknown }).type ?? type,
+      },
+      decoder,
+    );
   }
 
   return null;
 }
 
-function buildCursorArgs(opts: RunTaskOptions, model: string, prompt: string): string[] {
-  return [
+function buildCursorArgs(
+  opts: RunTaskOptions,
+  model: string,
+  prompt: string,
+  help: string,
+): string[] {
+  const args = [
     "--print",
     "--output-format",
     "stream-json",
@@ -283,8 +352,16 @@ function buildCursorArgs(opts: RunTaskOptions, model: string, prompt: string): s
     "--model",
     model,
     `--workspace=${opts.cwd}`,
-    prompt,
   ];
+
+  const resume = detectResumeSupport(help, "cursor");
+  const threadId = opts.resumeContext?.agentThreadId;
+  if (opts.resumeMode === "continue" && threadId && resume.resumeFlag) {
+    args.push(resume.resumeFlag, threadId);
+  }
+
+  args.push(prompt);
+  return args;
 }
 
 function buildCodexArgs(
@@ -292,31 +369,83 @@ function buildCodexArgs(
   model: string,
   prompt: string,
 ): string[] {
-  return buildCodexExecArgs(opts, model, prompt, opts.agentCommand);
+  const profile = detectCodexCliProfile(opts.agentCommand);
+  const threadId =
+    opts.resumeMode === "continue" ? opts.resumeContext?.agentThreadId : undefined;
+  const nativeResume =
+    Boolean(threadId) && Boolean(profile.resumeFlag || profile.threadFlag);
+
+  return buildCodexExecArgs(
+    { cwd: opts.cwd, agentThreadId: nativeResume ? threadId : undefined },
+    model,
+    prompt,
+    opts.agentCommand,
+  );
 }
 
-/**
- * Spawns headless Cursor `agent` or OpenAI `codex exec` against a project folder
- * and streams output. `windowsHide: false` so Electron does not swallow the console.
- */
+function resolvePrompt(opts: RunTaskOptions): string {
+  let body = opts.prompt.trim();
+
+  if (opts.resumeMode === "continue" && opts.resumeContext) {
+    const backend = parseAgentBackend(opts.agentBackend);
+    const profile = backend === "codex" ? detectCodexCliProfile(opts.agentCommand) : null;
+    const help = readAgentHelp(opts.agentCommand, backend);
+    const cursorResume = detectResumeSupport(help, "cursor");
+    const hasNative =
+      backend === "codex"
+        ? Boolean(
+            opts.resumeContext.agentThreadId &&
+              (profile?.resumeFlag || profile?.threadFlag),
+          )
+        : Boolean(opts.resumeContext.agentThreadId && cursorResume.resumeFlag);
+
+    if (!hasNative) {
+      body = buildResumePrompt(
+        {
+          priorPrompt: opts.resumeContext.priorPrompt,
+          logSummary: opts.resumeContext.logSummary,
+        },
+        body,
+      );
+    }
+  }
+
+  return `${body}\n\nReply in Markdown.`;
+}
+
 export class TaskRunner extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
   private killed = false;
+  private runtimeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async run(opts: RunTaskOptions): Promise<number> {
-    if (opts.dryRun) {
-      return this.runDry(opts);
+  async run(opts: RunTaskOptions): Promise<TaskRunResult> {
+    const logParts: string[] = [];
+    const onLog: RunTaskOptions["onLog"] = (stream, chunk) => {
+      logParts.push(chunk);
+      opts.onLog(stream, chunk);
+    };
+
+    if (opts.guardrails?.readOnly || opts.dryRun) {
+      const code = await this.runDry({ ...opts, onLog });
+      return { exitCode: code, logText: logParts.join("") };
     }
 
     const backend = parseAgentBackend(opts.agentBackend);
     const model =
       (opts.agentModel || defaultModelForBackend(backend)).trim() ||
       defaultModelForBackend(backend);
-    const prompt = `${opts.prompt.trim()}\n\nReply in Markdown.`;
+    const prompt = resolvePrompt(opts);
+    const help = readAgentHelp(opts.agentCommand, backend);
     const args =
       backend === "codex"
         ? buildCodexArgs(opts, model, prompt)
-        : buildCursorArgs(opts, model, prompt);
+        : buildCursorArgs(opts, model, prompt, help);
+
+    let agentThreadId: string | undefined;
+    const onThread = (id: string) => {
+      agentThreadId = id;
+      opts.onAgentThreadId?.(id);
+    };
 
     let child: ChildProcessWithoutNullStreams;
     try {
@@ -326,30 +455,54 @@ export class TaskRunner extends EventEmitter {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      opts.onLog("stderr", `\n[agent-relay] Failed to spawn: ${msg}\n`);
-      return 1;
+      onLog("stderr", `\n[agent-relay] Failed to spawn: ${msg}\n`);
+      return { exitCode: 1, logText: logParts.join("") };
     }
     this.child = child;
 
     const decoder: LineDecoder =
-      backend === "codex" ? new CodexJsonlDecoder() : new CursorStreamJsonDecoder();
+      backend === "codex"
+        ? new CodexJsonlDecoder(onThread)
+        : new CursorStreamJsonDecoder(onThread);
+
+    if (opts.maxRuntimeMinutes && opts.maxRuntimeMinutes > 0) {
+      this.runtimeTimer = setTimeout(
+        () => {
+          onLog(
+            "stderr",
+            `\n[agent-relay] Max runtime (${opts.maxRuntimeMinutes} min) exceeded — cancelling\n`,
+          );
+          this.cancel();
+        },
+        opts.maxRuntimeMinutes * 60_000,
+      );
+    }
 
     const handleChunk = async (stream: "stdout" | "stderr", chunk: string) => {
       const pieces =
         stream === "stdout" ? decoder.push(chunk) : chunk ? [chunk] : [];
       for (const piece of pieces) {
-        opts.onLog(stream, piece);
+        onLog(stream, piece);
         const lines = piece.split(/\r?\n/);
         for (const line of lines) {
-          const risk = matchRiskCommand(line);
+          const risk = matchRiskWithGuardrails(line, opts.guardrails);
           if (!risk) continue;
-          const approved = await opts.requestApproval(risk.command, risk.reason);
-          if (!approved) {
-            opts.onLog("stderr", `\n[agent-relay] Rejected: ${risk.command}\n`);
+          if (risk.tier === "block") {
+            onLog("stderr", `\n[agent-relay] Blocked: ${risk.command}\n`);
             this.cancel();
             return;
           }
-          opts.onLog("stdout", `\n[agent-relay] Approved: ${risk.command}\n`);
+          const approved = await opts.requestApproval(
+            risk.command,
+            risk.reason,
+            "approve",
+          );
+          if (!approved) {
+            onLog("stderr", `\n[agent-relay] Rejected: ${risk.command}\n`);
+            this.cancel();
+            return;
+          }
+          onLog("stdout", `\n[agent-relay] Approved: ${risk.command}\n`);
         }
       }
     };
@@ -361,20 +514,35 @@ export class TaskRunner extends EventEmitter {
       void handleChunk("stderr", buf.toString("utf8"));
     });
 
-    return new Promise((resolve) => {
+    const exitCode = await new Promise<number>((resolve) => {
       this.child!.on("close", (code) => {
+        if (this.runtimeTimer) clearTimeout(this.runtimeTimer);
         for (const piece of decoder.flush()) {
-          opts.onLog("stdout", piece);
+          onLog("stdout", piece);
+        }
+        if (!agentThreadId) {
+          if (decoder instanceof CodexJsonlDecoder) {
+            agentThreadId = decoder.getThreadId();
+          } else if (decoder instanceof CursorStreamJsonDecoder) {
+            agentThreadId = decoder.getSessionId();
+          }
         }
         this.child = null;
         resolve(this.killed ? 130 : (code ?? 1));
       });
       this.child!.on("error", (err) => {
-        opts.onLog("stderr", `\n[agent-relay] Failed to spawn: ${err.message}\n`);
+        if (this.runtimeTimer) clearTimeout(this.runtimeTimer);
+        onLog("stderr", `\n[agent-relay] Failed to spawn: ${err.message}\n`);
         this.child = null;
         resolve(1);
       });
     });
+
+    return {
+      exitCode,
+      agentThreadId,
+      logText: logParts.join(""),
+    };
   }
 
   private async runDry(opts: RunTaskOptions): Promise<number> {
@@ -387,6 +555,7 @@ export class TaskRunner extends EventEmitter {
       const approved = await opts.requestApproval(
         "npm install",
         "Package install/uninstall modifies node_modules",
+        "approve",
       );
       if (!approved) {
         opts.onLog("stderr", "[dry-run] Approval rejected — aborting\n");
@@ -406,6 +575,7 @@ export class TaskRunner extends EventEmitter {
 
   cancel(): void {
     this.killed = true;
+    if (this.runtimeTimer) clearTimeout(this.runtimeTimer);
     if (this.child && !this.child.killed) {
       this.child.kill("SIGTERM");
       setTimeout(() => {
@@ -423,4 +593,17 @@ function delay(ms: number): Promise<void> {
 
 export function newApprovalId(): string {
   return randomUUID();
+}
+
+export function buildTaskSummary(logText: string, exitCode: number): string {
+  const lines = logText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !l.startsWith("[agent") && !l.startsWith("[codex]"))
+    .slice(-3);
+  const tail = lines.join(" · ").slice(0, 200);
+  if (exitCode === 0) return tail || "Completed successfully";
+  if (exitCode === 130) return "Cancelled";
+  return tail || `Failed with exit code ${exitCode}`;
 }

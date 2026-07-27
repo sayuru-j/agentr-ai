@@ -68,6 +68,10 @@
               <span class="check-mark" aria-hidden="true"></span>
               <span class="check-label">Paired in Teams</span>
             </li>
+            <li id="check-cli" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label" id="check-cli-label">Agent CLI diagnosis OK</span>
+            </li>
           </ul>
           <p id="checklist-hint" class="checklist-hint"></p>
           <p id="checklist-ready" class="checklist-ready" hidden>Ready — send <code>!alias your prompt</code> in Teams.</p>
@@ -83,7 +87,7 @@
         </div>
 
         <p id="lock-banner" class="lock-banner" hidden>
-          Screen is locked — <code>/ss</code> will fail until you unlock Windows.
+          Screen is locked — new tasks and <code>/ss</code> are blocked until you unlock Windows.
         </p>
 
         <p class="hint">
@@ -156,8 +160,10 @@
           <div class="row">
             <input id="agentCommand" type="text" spellcheck="false" value="agent" />
             <button type="button" id="find-agent" class="text-btn">Find</button>
+            <button type="button" id="test-agent" class="text-btn">Test CLI</button>
           </div>
           <span id="agent-hint" class="hint">Searches PATH and common install folders.</span>
+          <pre id="agent-diagnosis" class="diagnosis" hidden></pre>
         </label>
 
         <label class="field">
@@ -175,6 +181,31 @@
         <label class="check">
           <input id="dryRun" type="checkbox" />
           <span>Dry run (global default)</span>
+        </label>
+
+        <label class="check">
+          <input id="blockTasksWhenLocked" type="checkbox" checked />
+          <span>Block tasks when Windows is locked</span>
+        </label>
+
+        <label class="check">
+          <input id="includeGitContext" type="checkbox" checked />
+          <span>Include git branch/status in prompts</span>
+        </label>
+
+        <label class="check">
+          <input id="approvalScreenshot" type="checkbox" />
+          <span>Screenshot desktop on approval requests</span>
+        </label>
+
+        <label class="field">
+          <span>Max runtime (minutes, 0 = off)</span>
+          <input id="maxRuntimeMinutes" type="number" min="0" step="1" value="0" />
+        </label>
+
+        <label class="field">
+          <span>Global prompt shortcuts (JSON)</span>
+          <textarea id="globalPrompts" rows="3" spellcheck="false" placeholder='{"fix-tests": "Run tests and fix failures"}'></textarea>
         </label>
 
         <label class="check">

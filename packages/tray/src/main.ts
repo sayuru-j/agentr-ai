@@ -28,6 +28,8 @@ import {
   type AgentBackend,
   parseAgentBackend,
   defaultCommandForBackend,
+  diagnoseAgentCli,
+  type AgentDiagnosis,
 } from "@agentr/worker";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -186,6 +188,7 @@ interface ChecklistState {
   agentFound: boolean;
   paired: boolean;
   agent: ResolveAgentResult;
+  diagnosis: AgentDiagnosis;
   allOk: boolean;
 }
 
@@ -195,6 +198,7 @@ function buildChecklist(): ChecklistState {
     config.workerToken?.trim() && !config.workerToken.includes("PASTE_"),
   );
   const agent = resolveAgentCommand(config.agentCommand, config.agentBackend);
+  const diagnosis = diagnoseAgentCli(config.agentCommand, config.agentBackend);
   const agentFound = config.dryRun || agent.found;
   const relayOk = status === "online" || status === "busy";
   const paired = pairedUsers > 0;
@@ -204,7 +208,8 @@ function buildChecklist(): ChecklistState {
     agentFound,
     paired,
     agent,
-    allOk: relayOk && tokenSet && agentFound && paired,
+    diagnosis,
+    allOk: relayOk && tokenSet && agentFound && diagnosis.ok && paired,
   };
 }
 
@@ -507,6 +512,7 @@ function registerIpc(): void {
     saveWorkerConfig(next);
     applyLoginItemSettings(next);
     worker?.updateConfig(next);
+    worker?.refreshDiagnosis();
     worker?.reconnect();
     broadcastStatus();
     if (next.checkUpdates) {
@@ -560,6 +566,19 @@ function registerIpc(): void {
     },
   );
 
+  ipcMain.handle(
+    "agent:diagnose",
+    (
+      _event,
+      payload?: { configured?: string; backend?: AgentBackend | string },
+    ) => {
+      const config = loadWorkerConfig();
+      const configured = payload?.configured?.trim() || config.agentCommand;
+      const backend = payload?.backend ?? config.agentBackend;
+      return diagnoseAgentCli(configured, backend);
+    },
+  );
+
   ipcMain.handle("worker:reconnect", () => {
     worker?.reconnect();
     return { ok: true };
@@ -609,11 +628,13 @@ if (!gotLock) {
 
     powerMonitor.on("lock-screen", () => {
       sessionLocked = true;
-      console.warn("[tray] Screen locked — /ss will fail until unlock");
+      worker?.updateSessionLock(true);
+      console.warn("[tray] Screen locked — tasks blocked until unlock");
       rebuildMenu();
     });
     powerMonitor.on("unlock-screen", () => {
       sessionLocked = false;
+      worker?.updateSessionLock(false);
       rebuildMenu();
     });
 

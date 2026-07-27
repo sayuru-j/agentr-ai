@@ -192,10 +192,14 @@ export function buildHelpCard() {
             value: "`!alias /get path` — fetch a file (basename OK; ≤1.5 MB)",
           },
           { title: "/cancel", value: "Cancel the running or queued agent task" },
+          { title: "/continue", value: "Resume the last task (`/continue prompt`)" },
+          { title: "/queue", value: "Show running and queued tasks" },
+          { title: "/history", value: "`/history [n]` — recent tasks (default 10)" },
+          { title: "/prompts", value: "List prompt shortcuts for `!alias /run name`" },
           { title: "/help", value: "This help card" },
           {
             title: "Task",
-            value: "`!alias your prompt` — attach files to drop into the project",
+            value: "`!alias your prompt` — `/continue`, `/run`, `/get`; attach files → `.agentr-inbox/`",
           },
         ],
       },
@@ -265,6 +269,11 @@ export function buildStatusCard(opts: {
   version?: string;
   projects: string[];
   agentModel?: string;
+  agentBackend?: string;
+  sessionLocked?: boolean;
+  queueDepth?: number;
+  workerOfflineSince?: string;
+  cliDiagnosis?: { ok: boolean; version?: string; errors?: string[] };
   latencyMs?: number | null;
   lastTask?: {
     status: string;
@@ -295,6 +304,24 @@ export function buildStatusCard(opts: {
   ];
   if (opts.agentModel) {
     facts.push({ title: "Model", value: opts.agentModel });
+  }
+  if (opts.agentBackend) {
+    facts.push({ title: "Backend", value: opts.agentBackend });
+  }
+  if (opts.sessionLocked) {
+    facts.push({ title: "Session", value: "locked" });
+  }
+  if (typeof opts.queueDepth === "number" && opts.queueDepth > 0) {
+    facts.push({ title: "Queue", value: String(opts.queueDepth) });
+  }
+  if (!opts.workerOnline && opts.workerOfflineSince) {
+    facts.push({ title: "Offline since", value: opts.workerOfflineSince });
+  }
+  if (opts.cliDiagnosis) {
+    const cliLabel = opts.cliDiagnosis.ok
+      ? `OK${opts.cliDiagnosis.version ? ` (${opts.cliDiagnosis.version})` : ""}`
+      : opts.cliDiagnosis.errors?.[0] ?? "check failed";
+    facts.push({ title: "Agent CLI", value: cliLabel });
   }
   if (typeof opts.latencyMs === "number") {
     facts.push({ title: "Latency", value: `${opts.latencyMs} ms` });
@@ -461,31 +488,59 @@ export function buildApprovalCard(opts: {
   approvalId: string;
   command: string;
   reason: string;
+  projectAlias?: string;
+  cwd?: string;
+  gitBranch?: string;
+  gitDirty?: boolean;
+  screenshotUrl?: string;
 }) {
+  const facts: Array<{ title: string; value: string }> = [];
+  if (opts.projectAlias) facts.push({ title: "Project", value: opts.projectAlias });
+  if (opts.cwd) facts.push({ title: "Folder", value: opts.cwd });
+  if (opts.gitBranch) {
+    facts.push({
+      title: "Git",
+      value: `${opts.gitBranch}${opts.gitDirty ? " (dirty)" : " (clean)"}`,
+    });
+  }
+
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: "⚠️ Approval required",
+      weight: "Bolder",
+      size: "Medium",
+      color: "Warning",
+    },
+    {
+      type: "TextBlock",
+      text: opts.reason,
+      wrap: true,
+    },
+    {
+      type: "TextBlock",
+      text: `\`${opts.command}\``,
+      wrap: true,
+      fontType: "Monospace",
+    },
+  ];
+  if (facts.length > 0) {
+    body.splice(2, 0, { type: "FactSet", facts });
+  }
+  if (opts.screenshotUrl) {
+    body.push({
+      type: "Image",
+      url: opts.screenshotUrl,
+      altText: "Desktop at approval time",
+      size: "Stretch",
+    });
+  }
+
   return {
     type: "AdaptiveCard",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.4",
-    body: [
-      {
-        type: "TextBlock",
-        text: "⚠️ Approval required",
-        weight: "Bolder",
-        size: "Medium",
-        color: "Warning",
-      },
-      {
-        type: "TextBlock",
-        text: opts.reason,
-        wrap: true,
-      },
-      {
-        type: "TextBlock",
-        text: `\`${opts.command}\``,
-        wrap: true,
-        fontType: "Monospace",
-      },
-    ],
+    body,
     actions: [
       {
         type: "Action.Submit",
@@ -508,6 +563,126 @@ export function buildApprovalCard(opts: {
           taskId: opts.taskId,
           approvalId: opts.approvalId,
         },
+      },
+    ],
+  };
+}
+
+export function buildQueueCard(opts: {
+  runningTaskId?: string;
+  queuedTaskIds: string[];
+  hostname?: string;
+}) {
+  const facts: Array<{ title: string; value: string }> = [];
+  if (opts.hostname) facts.push({ title: "Worker", value: opts.hostname });
+  if (opts.runningTaskId) {
+    facts.push({ title: "Running", value: opts.runningTaskId.slice(0, 8) });
+  }
+  opts.queuedTaskIds.forEach((id, i) => {
+    facts.push({ title: `Queued #${i + 1}`, value: id.slice(0, 8) });
+  });
+  if (facts.length === 0) {
+    facts.push({ title: "Queue", value: "empty" });
+  }
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "Task queue",
+        weight: "Bolder",
+        size: "Medium",
+      },
+      { type: "FactSet", facts },
+    ],
+  };
+}
+
+export function buildHistoryCard(opts: {
+  entries: Array<{
+    taskId: string;
+    prompt: string;
+    projectAlias?: string;
+    status: string;
+    exitCode?: number;
+    summary?: string;
+    createdAt: number;
+  }>;
+  limit: number;
+}) {
+  const lines =
+    opts.entries.length === 0
+      ? "_No task history in this chat yet._"
+      : opts.entries
+          .map((e) => {
+            const when = new Date(e.createdAt)
+              .toISOString()
+              .replace("T", " ")
+              .slice(0, 16);
+            const alias = e.projectAlias ? `!${e.projectAlias} ` : "";
+            const prompt =
+              e.prompt.length > 60 ? `${e.prompt.slice(0, 60)}…` : e.prompt;
+            const exit =
+              typeof e.exitCode === "number" ? ` · exit ${e.exitCode}` : "";
+            const sum = e.summary ? `\n  _${e.summary.slice(0, 80)}_` : "";
+            return `**${e.status}**${exit} · ${when} UTC\n${alias}${prompt}${sum}`;
+          })
+          .join("\n\n");
+
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: `Task history (last ${opts.limit})`,
+        weight: "Bolder",
+        size: "Medium",
+      },
+      {
+        type: "TextBlock",
+        text: lines,
+        wrap: true,
+        size: "Small",
+      },
+    ],
+  };
+}
+
+export function buildPromptsCard(opts: {
+  templates: Array<{ alias?: string; name: string; text: string }>;
+}) {
+  const lines =
+    opts.templates.length === 0
+      ? "_No shortcuts configured. Add `prompts` in tray project settings._"
+      : opts.templates
+          .map((t) => {
+            const use = t.alias ? `!${t.alias} /run ${t.name}` : `/run ${t.name}`;
+            const preview =
+              t.text.length > 80 ? `${t.text.slice(0, 80)}…` : t.text;
+            return `**${use}**\n${preview}`;
+          })
+          .join("\n\n");
+
+  return {
+    type: "AdaptiveCard",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "Prompt shortcuts",
+        weight: "Bolder",
+        size: "Medium",
+      },
+      {
+        type: "TextBlock",
+        text: lines,
+        wrap: true,
+        size: "Small",
       },
     ],
   };

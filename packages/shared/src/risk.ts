@@ -1,3 +1,5 @@
+import type { ProjectGuardrails } from "./protocol.js";
+
 /** Patterns that should pause for phone approval before continuing. */
 export const RISK_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> =
   [
@@ -47,16 +49,64 @@ export const RISK_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> =
     },
   ];
 
+export type RiskTier = "block" | "approve" | "allow";
+
 export function matchRiskCommand(
   line: string,
-): { command: string; reason: string } | null {
+): { command: string; reason: string; tier: RiskTier } | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   for (const { pattern, reason } of RISK_PATTERNS) {
     if (pattern.test(trimmed)) {
-      return { command: trimmed, reason };
+      return { command: trimmed, reason, tier: "approve" };
     }
   }
+  return null;
+}
+
+function compilePattern(raw: string): RegExp | null {
+  try {
+    return new RegExp(raw, "i");
+  } catch {
+    return null;
+  }
+}
+
+/** Combine global risk patterns with per-project deny/allow lists. */
+export function matchRiskWithGuardrails(
+  line: string,
+  guardrails?: ProjectGuardrails,
+): { command: string; reason: string; tier: RiskTier } | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+
+  if (guardrails?.allowPatterns?.length) {
+    for (const raw of guardrails.allowPatterns) {
+      const p = compilePattern(raw);
+      if (p?.test(trimmed)) return null;
+    }
+  }
+
+  if (guardrails?.denyPatterns?.length) {
+    for (const raw of guardrails.denyPatterns) {
+      const p = compilePattern(raw);
+      if (p?.test(trimmed)) {
+        return { command: trimmed, reason: "Blocked by project deny rule", tier: "block" };
+      }
+    }
+  }
+
+  const base = matchRiskCommand(trimmed);
+  if (base) return base;
+
+  if (guardrails?.requireApproval) {
+    return {
+      command: trimmed,
+      reason: "Project requires approval for all shell commands",
+      tier: "approve",
+    };
+  }
+
   return null;
 }
 
@@ -70,5 +120,5 @@ export function parseProjectAlias(text: string): {
   return { prompt: text.trim() };
 }
 
-export const PROTOCOL_VERSION = "0.2.0";
+export const PROTOCOL_VERSION = "0.3.0";
 export const WS_PATH = "/ws";

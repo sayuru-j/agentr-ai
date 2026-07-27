@@ -2,11 +2,28 @@
   "relayUrl": "wss://relay.example.com/ws",
   "workerToken": "paste-token-from-vm-config.env",
   "projects": {
-    "frontend": "C:/path/to/frontend",
-    "backend": "C:/path/to/backend"
+    "frontend": {
+      "path": "C:/path/to/frontend",
+      "prompts": {
+        "fix-tests": "Run tests and fix failures. Summarize what changed."
+      },
+      "guardrails": {
+        "blockWhenLocked": true
+      }
+    },
+    "backend": {
+      "path": "C:/path/to/backend"
+    }
   },
   "agentBackend": "cursor",
   "agentCommand": "agent",
   "agentModel": "auto",
-  "dryRun": true
+  "dryRun": true,
+  "blockTasksWhenLocked": true,
+  "includeGitContext": true,
+  "maxRuntimeMinutes": 0,
+  "approvalScreenshot": false,
+  "prompts": {
+    "review": "Review recent changes and suggest improvements."
+  }
 }

@@ -1,8 +1,8 @@
 # AgentR
 
-Self-hosted bridge from **Microsoft Teams** to a **local Cursor agent** on your PC.
+Self-hosted bridge from **Microsoft Teams** to a **local agent CLI** (Cursor or Codex) on your PC.
 
-Type in Teams → a small cloud VM relays over WebSockets → your workstation runs Cursor CLI against local repos → live task cards (and optional desktop screenshots) come back to the same chat.
+Type in Teams → a small cloud VM relays over WebSockets → your workstation runs the agent against local repos → live task cards (and optional desktop screenshots) come back to the same chat.
 
 <p align="center">
   <img src="./docs/media/agent-r-bot-teams-chat.png" alt="AgentR in Microsoft Teams — pair and status" width="720" />
@@ -17,7 +17,13 @@ Type in Teams → a small cloud VM relays over WebSockets → your workstation r
 | In Teams | What it does |
 |----------|----------------|
 | `/pair <code>` | Link this chat to your PC |
-| `!alias your prompt` | Run Cursor agent in that project (attach files to drop into `.agentr-inbox/`) |
+| `!alias your prompt` | Run agent in that project (attach files → `.agentr-inbox/`) |
+| `!alias /continue [prompt]` | Resume last task for that project |
+| `!alias /run <shortcut> [extra]` | Expand a prompt template from tray config |
+| `/continue [prompt]` | Resume last task in this chat |
+| `/queue` | Show running and queued tasks |
+| `/history [n]` | Recent tasks in this chat (persisted on VM) |
+| `/prompts` | List configured prompt shortcuts |
 | `/projects` | List project aliases |
 | `/last` | Last task prompt / exit / short log |
 | `/model` · `/model auto` | Show or set the agent model |
@@ -39,9 +45,9 @@ AgentR only replies to messages starting with `!` or `/`.
   <img src="./docs/media/settings.png" alt="AgentR Settings — relay URL, token, model" width="360" />
 </p>
 
-- **Home** — online status, `/pair` code, reconnect  
-- **Projects** — alias → folder (used as `!alias` in Teams)  
-- **Settings** — relay URL, worker token, agent command, model (`auto` by default)
+- **Home** — online status, `/pair` code, reconnect, CLI diagnosis checklist  
+- **Projects** — alias → folder, per-project guardrails, prompt shortcuts  
+- **Settings** — relay URL, worker token, Cursor/Codex backend, **Test CLI**, git context, session lock policy
 
 ## Quick start
 

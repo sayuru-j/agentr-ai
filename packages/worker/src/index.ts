@@ -32,6 +32,11 @@ export {
 } from "./display.js";
 export { probeProjectDisks, formatBytes } from "./disk.js";
 export {
+  diagnoseAgentCli,
+  toCliDiagnosisSummary,
+  type AgentDiagnosis,
+} from "./agent-diagnose.js";
+export {
   readProjectFileForGet,
   resolveSafeProjectPath,
   resolveProjectFileQuery,
