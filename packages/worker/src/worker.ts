@@ -9,7 +9,7 @@ import {
 import { hostname as osHostname } from "node:os";
 import WebSocket from "ws";
 import type { WorkerConfig } from "./config.js";
-import { saveWorkerConfig } from "./config.js";
+import { defaultModelForBackend, saveWorkerConfig } from "./config.js";
 import { writeTaskInboxFiles } from "./inbox.js";
 import { preferResolvedAgentCommand } from "./resolve-agent.js";
 import { prepareForScreenshot } from "./display.js";
@@ -544,12 +544,13 @@ export class AgentRelayWorker {
       }
     }
 
+    const fallbackModel = defaultModelForBackend(this.config.agentBackend);
     const model =
       (agentModel ||
         project?.agentModel ||
         this.config.agentModel ||
-        "auto"
-      ).trim() || "auto";
+        fallbackModel
+      ).trim() || fallbackModel;
     const dryRun =
       typeof project?.dryRun === "boolean"
         ? project.dryRun
@@ -566,7 +567,11 @@ export class AgentRelayWorker {
       taskId,
       prompt,
       cwd,
-      agentCommand: preferResolvedAgentCommand(this.config.agentCommand),
+      agentBackend: this.config.agentBackend,
+      agentCommand: preferResolvedAgentCommand(
+        this.config.agentCommand,
+        this.config.agentBackend,
+      ),
       agentModel: model,
       dryRun,
       onLog: (stream, chunk) => {

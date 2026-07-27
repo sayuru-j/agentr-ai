@@ -5,6 +5,8 @@
     "frontend": "C:/path/to/frontend",
     "backend": "C:/path/to/backend"
   },
+  "agentBackend": "cursor",
   "agentCommand": "agent",
+  "agentModel": "auto",
   "dryRun": true
 }

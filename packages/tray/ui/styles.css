@@ -309,7 +309,8 @@ body {
 
 input[type="url"],
 input[type="password"],
-input[type="text"] {
+input[type="text"],
+select {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -321,7 +322,8 @@ input[type="text"] {
   outline: none;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--fg);
 }
 

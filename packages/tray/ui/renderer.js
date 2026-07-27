@@ -142,7 +142,9 @@ function renderChecklist(checklist) {
       ok: checklist.agentFound,
       hint: checklist.agent?.found
         ? `Using ${checklist.agent.command}`
-        : "Install Cursor Agent CLI, or click Find in Settings.",
+        : checklist.agent?.backend === "codex"
+          ? "Install Codex CLI (`npm i -g @openai/codex`), or click Find in Settings."
+          : "Install Cursor Agent CLI, or click Find in Settings.",
     },
     {
       id: "check-relay",
@@ -179,6 +181,15 @@ function renderChecklist(checklist) {
   if (checklist.agent?.found && checklist.agent.detail) {
     $("agent-hint").textContent = `Found (${checklist.agent.source}): ${checklist.agent.detail}`;
   }
+  if (checklist.agent?.backend) {
+    const label = $("check-agent-label");
+    if (label) {
+      label.textContent =
+        checklist.agent.backend === "codex"
+          ? "Codex CLI found"
+          : "Cursor agent CLI found";
+    }
+  }
 }
 
 function updateTokenSavedLabel(token) {
@@ -192,12 +203,68 @@ function updateTokenSavedLabel(token) {
   el.textContent = `Saved ····${token.slice(-4)} (${token.length} chars)`;
 }
 
+function applyBackendHints(backend) {
+  const isCodex = backend === "codex";
+  $("agent-hint").textContent = isCodex
+    ? "Searches PATH and common Codex install folders. Auth: CODEX_API_KEY or codex login."
+    : "Searches PATH and %LOCALAPPDATA%\\cursor-agent.";
+  $("model-hint").innerHTML = isCodex
+    ? "Codex model id (for example <code>gpt-5.4</code>)."
+    : "Use <code>auto</code> for Cursor Auto (avoids expensive picks).";
+  $("agentModel").placeholder = isCodex ? "gpt-5.4" : "auto";
+  const label = $("check-agent-label");
+  if (label) {
+    label.textContent = isCodex ? "Codex CLI found" : "Cursor agent CLI found";
+  }
+}
+
+function onBackendChange(resetDefaults) {
+  const backend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+  applyBackendHints(backend);
+  if (!resetDefaults) return;
+  const cmd = $("agentCommand").value.trim();
+  const model = $("agentModel").value.trim();
+  const wrongForBackend =
+    backend === "codex"
+      ? /cursor-agent|[/\\]agent\.(cmd|exe|bat)$/i.test(cmd)
+      : /[/\\]codex\.(cmd|exe|bat)$/i.test(cmd);
+  if (wrongForBackend || !cmd || cmd === "agent" || cmd === "codex") {
+    $("agentCommand").value = backend === "codex" ? "codex" : "agent";
+  }
+  if (!model || model === "auto" || model === "gpt-5.4") {
+    $("agentModel").value = backend === "codex" ? "gpt-5.4" : "auto";
+  }
+  void autoFindAgent(backend);
+}
+
+async function autoFindAgent(backend) {
+  const result = await window.agentr.resolveAgent(
+    $("agentCommand").value,
+    backend,
+  );
+  if (result.found) {
+    $("agentCommand").value = result.command;
+    $("agent-hint").textContent = `Found (${result.source}): ${result.detail || result.command}`;
+  } else {
+    $("agent-hint").textContent =
+      backend === "codex"
+        ? "Codex not found. Install it (`npm i -g @openai/codex`) or paste the full path."
+        : "Not found. Install Cursor Agent CLI, or paste the full path to agent.cmd.";
+  }
+}
+
 function fillForm(config) {
   savedToken = (config.workerToken || "").trim();
   $("relayUrl").value = config.relayUrl || "";
   $("workerToken").value = savedToken;
-  $("agentCommand").value = config.agentCommand || "agent";
-  $("agentModel").value = config.agentModel || "auto";
+  $("agentBackend").value =
+    config.agentBackend === "codex" ? "codex" : "cursor";
+  $("agentCommand").value =
+    config.agentCommand ||
+    (config.agentBackend === "codex" ? "codex" : "agent");
+  $("agentModel").value =
+    config.agentModel ||
+    (config.agentBackend === "codex" ? "gpt-5.4" : "auto");
   $("dryRun").checked = Boolean(config.dryRun);
   $("openAtLogin").checked = Boolean(config.openAtLogin);
   $("startMinimized").checked = config.startMinimized !== false;
@@ -213,15 +280,30 @@ function fillForm(config) {
     }
   }
   updateProjectsEmpty();
+  applyBackendHints($("agentBackend").value);
+  const backend = config.agentBackend === "codex" ? "codex" : "cursor";
+  const cmd = $("agentCommand").value.trim();
+  if (
+    backend === "codex" &&
+    /cursor-agent|[/\\]agent\.(cmd|exe|bat)$/i.test(cmd)
+  ) {
+    void autoFindAgent(backend);
+  }
 }
 
 function readForm() {
   const typed = $("workerToken").value.trim();
+  const agentBackend = $("agentBackend").value === "codex" ? "codex" : "cursor";
   return {
     relayUrl: $("relayUrl").value.trim(),
     workerToken: typed || savedToken,
-    agentCommand: $("agentCommand").value.trim() || "agent",
-    agentModel: $("agentModel").value.trim() || "auto",
+    agentBackend,
+    agentCommand:
+      $("agentCommand").value.trim() ||
+      (agentBackend === "codex" ? "codex" : "agent"),
+    agentModel:
+      $("agentModel").value.trim() ||
+      (agentBackend === "codex" ? "gpt-5.4" : "auto"),
     dryRun: $("dryRun").checked,
     openAtLogin: $("openAtLogin").checked,
     startMinimized: $("startMinimized").checked,
@@ -308,17 +390,25 @@ async function boot() {
   });
 
   $("find-agent").addEventListener("click", async () => {
-    const result = await window.agentr.resolveAgent($("agentCommand").value);
+    const backend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+    const result = await window.agentr.resolveAgent(
+      $("agentCommand").value,
+      backend,
+    );
     if (result.found) {
       $("agentCommand").value = result.command;
       $("agent-hint").textContent = `Found (${result.source}): ${result.detail || result.command}`;
       showMsg("Agent CLI found — Save & connect to keep it");
     } else {
       $("agent-hint").textContent =
-        "Not found. Install Cursor Agent CLI, or paste the full path to agent.cmd.";
+        backend === "codex"
+          ? "Not found. Install Codex CLI, set CODEX_API_KEY, or paste the full path to codex."
+          : "Not found. Install Cursor Agent CLI, or paste the full path to agent.cmd.";
       showMsg("Agent CLI not found", true);
     }
   });
+
+  $("agentBackend").addEventListener("change", () => onBackendChange(true));
 
   $("pairing-btn").addEventListener("click", async () => {
     const code = $("pairing-btn").dataset.code;

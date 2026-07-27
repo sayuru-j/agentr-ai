@@ -25,6 +25,9 @@ import {
   type WorkerStatus,
   type ResolveAgentResult,
   type ConnectionHint,
+  type AgentBackend,
+  parseAgentBackend,
+  defaultCommandForBackend,
 } from "@agentr/worker";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -191,7 +194,7 @@ function buildChecklist(): ChecklistState {
   const tokenSet = Boolean(
     config.workerToken?.trim() && !config.workerToken.includes("PASTE_"),
   );
-  const agent = resolveAgentCommand(config.agentCommand);
+  const agent = resolveAgentCommand(config.agentCommand, config.agentBackend);
   const agentFound = config.dryRun || agent.found;
   const relayOk = status === "online" || status === "busy";
   const paired = pairedUsers > 0;
@@ -205,13 +208,16 @@ function buildChecklist(): ChecklistState {
   };
 }
 
-/** Persist a concrete agent path when config still says bare `agent`. */
+/** Persist a concrete agent path when config still says a bare command name. */
 function autoPersistResolvedAgent(config: WorkerConfig): WorkerConfig {
-  const preferred = preferResolvedAgentCommand(config.agentCommand);
+  const preferred = preferResolvedAgentCommand(
+    config.agentCommand,
+    config.agentBackend,
+  );
   if (preferred === config.agentCommand) return config;
   const next = { ...config, agentCommand: preferred };
   saveWorkerConfig(next);
-  console.log(`[tray] Resolved agent CLI → ${preferred}`);
+  console.log(`[tray] Resolved ${config.agentBackend} CLI → ${preferred}`);
   return next;
 }
 
@@ -378,7 +384,7 @@ function startWorker(): void {
   console.log(
     `[tray] Config ${DEFAULT_CONFIG_PATH} · token ${config.workerToken ? `${config.workerToken.length} chars (…${config.workerToken.slice(-4)})` : "MISSING"}`,
   );
-  const agent = resolveAgentCommand(config.agentCommand);
+  const agent = resolveAgentCommand(config.agentCommand, config.agentBackend);
   console.log(
     `[tray] Agent CLI: ${agent.found ? `${agent.command} (${agent.source})` : "NOT FOUND — set path in Settings"}`,
   );
@@ -450,7 +456,8 @@ function startWorker(): void {
     config.workerToken.includes("PASTE_") ||
     config.relayUrl.includes("localhost") ||
     config.relayUrl.includes("example.com") ||
-    (!config.dryRun && !resolveAgentCommand(config.agentCommand).found);
+    (!config.dryRun &&
+      !resolveAgentCommand(config.agentCommand, config.agentBackend).found);
 
   if (needsSetup) {
     console.warn("[tray] Open settings to paste worker token and relay URL.");
@@ -481,6 +488,9 @@ function registerIpc(): void {
     const next: WorkerConfig = {
       ...current,
       ...partial,
+      agentBackend: parseAgentBackend(
+        partial.agentBackend ?? current.agentBackend,
+      ),
       projects: coerceProjects(partial.projects ?? current.projects),
     };
     if (!next.relayUrl?.trim()) {
@@ -489,11 +499,11 @@ function registerIpc(): void {
     if (!next.workerToken?.trim()) {
       throw new Error("Worker token is required");
     }
-    if (!next.agentCommand?.trim() || next.agentCommand.trim() === "agent") {
-      next.agentCommand = preferResolvedAgentCommand(
-        next.agentCommand || "agent",
-      );
-    }
+    const fallbackCmd = defaultCommandForBackend(next.agentBackend);
+    next.agentCommand = preferResolvedAgentCommand(
+      next.agentCommand || fallbackCmd,
+      next.agentBackend,
+    );
     saveWorkerConfig(next);
     applyLoginItemSettings(next);
     worker?.updateConfig(next);
@@ -529,13 +539,26 @@ function registerIpc(): void {
     return { ok: Boolean(url) };
   });
 
-  ipcMain.handle("agent:resolve", (_event, configured?: string) => {
-    const cmd =
-      typeof configured === "string" && configured.trim()
-        ? configured.trim()
-        : loadWorkerConfig().agentCommand;
-    return resolveAgentCommand(cmd);
-  });
+  ipcMain.handle(
+    "agent:resolve",
+    (
+      _event,
+      payload?: string | { configured?: string; backend?: AgentBackend | string },
+    ) => {
+      const config = loadWorkerConfig();
+      let configured = config.agentCommand;
+      let backend: AgentBackend | string = config.agentBackend;
+      if (typeof payload === "string") {
+        configured = payload.trim() || configured;
+      } else if (payload && typeof payload === "object") {
+        if (typeof payload.configured === "string" && payload.configured.trim()) {
+          configured = payload.configured.trim();
+        }
+        if (payload.backend != null) backend = payload.backend;
+      }
+      return resolveAgentCommand(configured, backend);
+    },
+  );
 
   ipcMain.handle("worker:reconnect", () => {
     worker?.reconnect();

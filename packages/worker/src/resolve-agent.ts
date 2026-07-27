@@ -2,6 +2,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { execFileSync } from "node:child_process";
+import {
+  type AgentBackend,
+  defaultCommandForBackend,
+  parseAgentBackend,
+} from "./config.js";
 
 export type AgentResolveSource =
   | "config"
@@ -16,12 +21,19 @@ export interface ResolveAgentResult {
   source: AgentResolveSource;
   /** Human-readable location when found. */
   detail?: string;
+  backend: AgentBackend;
 }
 
-const WIN_NAMES = ["agent.cmd", "agent.exe", "agent.bat", "agent"];
-const POSIX_NAMES = ["agent"];
+const CURSOR_WIN_NAMES = ["agent.cmd", "agent.exe", "agent.bat", "agent"];
+const CURSOR_POSIX_NAMES = ["agent"];
+const CODEX_WIN_NAMES = ["codex.cmd", "codex.exe", "codex.bat", "codex"];
+const CODEX_POSIX_NAMES = ["codex"];
 
 /** Strip surrounding quotes so config/"Find" paths with spaces still resolve. */
+export function stripConfiguredCommand(value: string): string {
+  return stripOuterQuotes(value);
+}
+
 function stripOuterQuotes(value: string): string {
   const t = value.trim();
   if (
@@ -38,7 +50,6 @@ function looksLikeFilesystemPath(value: string): boolean {
   if (!value) return false;
   if (isAbsolute(value)) return true;
   if (value.includes("/") || value.includes("\\")) return true;
-  // Windows drive-relative: C:agent
   if (/^[a-zA-Z]:/.test(value)) return true;
   return false;
 }
@@ -86,6 +97,13 @@ function findOnPath(names: string[]): string | null {
   return null;
 }
 
+function binaryNames(backend: AgentBackend): string[] {
+  if (backend === "codex") {
+    return process.platform === "win32" ? CODEX_WIN_NAMES : CODEX_POSIX_NAMES;
+  }
+  return process.platform === "win32" ? CURSOR_WIN_NAMES : CURSOR_POSIX_NAMES;
+}
+
 /** Common Cursor Agent CLI install folders on Windows. */
 function cursorAgentCandidateDirs(): string[] {
   const dirs: string[] = [];
@@ -100,12 +118,28 @@ function cursorAgentCandidateDirs(): string[] {
   return dirs;
 }
 
-function findInCursorAgentDirs(): string | null {
-  const names = process.platform === "win32" ? WIN_NAMES : POSIX_NAMES;
-  for (const dir of cursorAgentCandidateDirs()) {
+/** Common Codex CLI install folders. */
+function codexCandidateDirs(): string[] {
+  const dirs: string[] = [];
+  const local = process.env.LOCALAPPDATA?.trim();
+  const appData = process.env.APPDATA?.trim();
+  const home = homedir();
+  if (local) {
+    dirs.push(join(local, "Programs", "codex"));
+    dirs.push(join(local, "codex"));
+  }
+  if (appData) {
+    dirs.push(join(appData, "npm"));
+  }
+  dirs.push(join(home, ".local", "bin"));
+  dirs.push(join(home, ".codex", "bin"));
+  return dirs;
+}
+
+function findInDirs(dirs: string[], names: string[]): string | null {
+  for (const dir of dirs) {
     const hit = firstExisting(names.map((n) => join(dir, n)));
     if (hit) return hit;
-    // Some installs nest under versions\<id>\
     const versions = join(dir, "versions");
     if (!existsSync(versions)) continue;
     try {
@@ -123,31 +157,74 @@ function findInCursorAgentDirs(): string | null {
   return null;
 }
 
+function looksLikeCursorAgentPath(command: string): boolean {
+  const lower = command.toLowerCase().replace(/\\/g, "/");
+  return (
+    lower.includes("cursor-agent") ||
+    /[/\\]agent\.(cmd|exe|bat)$/i.test(lower)
+  );
+}
+
+function looksLikeCodexPath(command: string): boolean {
+  const lower = command.toLowerCase().replace(/\\/g, "/");
+  return /[/\\]codex\.(cmd|exe|bat)$/i.test(lower) || /[/\\]codex$/i.test(lower);
+}
+
+/** Reject a configured path that belongs to the other backend. */
+export function commandMatchesBackend(
+  backend: AgentBackend,
+  command: string,
+): boolean {
+  const trimmed = stripOuterQuotes(command);
+  if (!trimmed) return false;
+
+  if (!looksLikeFilesystemPath(trimmed)) {
+    const base = trimmed.toLowerCase();
+    if (backend === "codex") {
+      return base === "codex" || base === "codex.cmd" || base === "codex.exe";
+    }
+    return base === "agent" || base.startsWith("agent.");
+  }
+
+  if (backend === "codex") return !looksLikeCursorAgentPath(trimmed);
+  return !looksLikeCodexPath(trimmed) || looksLikeCursorAgentPath(trimmed);
+}
+
+function findInInstallDirs(backend: AgentBackend): string | null {
+  const names = binaryNames(backend);
+  const dirs =
+    backend === "codex" ? codexCandidateDirs() : cursorAgentCandidateDirs();
+  return findInDirs(dirs, names);
+}
+
 /**
- * Resolve Cursor `agent` CLI for spawn.
- * Prefer an existing configured path; else PATH; else %LOCALAPPDATA%\cursor-agent.
+ * Resolve agent CLI for spawn (Cursor `agent` or OpenAI `codex`).
+ * Prefer an existing configured path; else PATH; else known install dirs.
  */
 export function resolveAgentCommand(
   configured = "agent",
+  backend: AgentBackend | string = "cursor",
 ): ResolveAgentResult {
-  const trimmed = stripOuterQuotes(configured) || "agent";
+  const resolvedBackend = parseAgentBackend(backend);
+  const fallback = defaultCommandForBackend(resolvedBackend);
+  const trimmed = stripOuterQuotes(configured) || fallback;
+  const names = binaryNames(resolvedBackend);
 
   if (looksLikeFilesystemPath(trimmed)) {
-    if (existsSync(trimmed)) {
+    if (existsSync(trimmed) && commandMatchesBackend(resolvedBackend, trimmed)) {
       return {
         command: trimmed,
         found: true,
         source: "config",
         detail: trimmed,
+        backend: resolvedBackend,
       };
     }
-    // Configured path missing — still search defaults
+    // Configured path exists but is the wrong CLI for this backend — keep searching.
   }
 
-  const names =
-    process.platform === "win32" ? WIN_NAMES : [...POSIX_NAMES, trimmed];
   const onPath = findOnPath(
-    trimmed !== "agent" && !looksLikeFilesystemPath(trimmed)
+    trimmed !== fallback && !looksLikeFilesystemPath(trimmed)
       ? [trimmed, ...names]
       : names,
   );
@@ -157,38 +234,50 @@ export function resolveAgentCommand(
       found: true,
       source: "path",
       detail: onPath,
+      backend: resolvedBackend,
     };
   }
 
-  const local = findInCursorAgentDirs();
+  const local = findInInstallDirs(resolvedBackend);
   if (local) {
     return {
       command: local,
       found: true,
       source: "localappdata",
       detail: local,
+      backend: resolvedBackend,
     };
   }
 
   return {
-    command: looksLikeFilesystemPath(trimmed) ? trimmed : "agent",
+    command: looksLikeFilesystemPath(trimmed) ? trimmed : fallback,
     found: false,
     source: "missing",
+    backend: resolvedBackend,
   };
 }
 
 /**
- * If config still says bare `agent` and we can find a real binary, return the path
- * so Electron/portable builds do not depend on a thin GUI PATH.
+ * If config still says a bare command name and we can find a real binary,
+ * return the path so Electron/portable builds do not depend on a thin GUI PATH.
  */
-export function preferResolvedAgentCommand(configured: string): string {
-  const trimmed = stripOuterQuotes(configured) || "agent";
-  if (looksLikeFilesystemPath(trimmed) && existsSync(trimmed)) {
+export function preferResolvedAgentCommand(
+  configured: string,
+  backend: AgentBackend | string = "cursor",
+): string {
+  const resolvedBackend = parseAgentBackend(backend);
+  const fallback = defaultCommandForBackend(resolvedBackend);
+  const trimmed = stripOuterQuotes(configured) || fallback;
+  if (
+    looksLikeFilesystemPath(trimmed) &&
+    existsSync(trimmed) &&
+    commandMatchesBackend(resolvedBackend, trimmed)
+  ) {
     return trimmed;
   }
-  const resolved = resolveAgentCommand(trimmed);
-  if (resolved.found && resolved.source !== "config") {
+  const resolved = resolveAgentCommand(trimmed, resolvedBackend);
+  if (resolved.found) {
     return resolved.command;
   }
-  return trimmed;
+  return fallback;
 }

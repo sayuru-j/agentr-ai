@@ -58,7 +58,7 @@
             </li>
             <li id="check-agent" data-ok="false">
               <span class="check-mark" aria-hidden="true"></span>
-              <span class="check-label">Cursor agent CLI found</span>
+              <span class="check-label" id="check-agent-label">Agent CLI found</span>
             </li>
             <li id="check-relay" data-ok="false">
               <span class="check-mark" aria-hidden="true"></span>
@@ -143,12 +143,21 @@
         </label>
 
         <label class="field">
+          <span>Agent backend</span>
+          <select id="agentBackend">
+            <option value="cursor">Cursor CLI (agent)</option>
+            <option value="codex">OpenAI Codex CLI</option>
+          </select>
+          <span class="hint">Which local CLI runs Teams tasks on this PC.</span>
+        </label>
+
+        <label class="field">
           <span>Agent command</span>
           <div class="row">
             <input id="agentCommand" type="text" spellcheck="false" value="agent" />
             <button type="button" id="find-agent" class="text-btn">Find</button>
           </div>
-          <span id="agent-hint" class="hint">Searches PATH and <code>%LOCALAPPDATA%\cursor-agent</code>.</span>
+          <span id="agent-hint" class="hint">Searches PATH and common install folders.</span>
         </label>
 
         <label class="field">
@@ -160,7 +169,7 @@
             value="auto"
             placeholder="auto"
           />
-          <span class="hint">Use <code>auto</code> for Cursor Auto (avoids expensive picks).</span>
+          <span id="model-hint" class="hint">Use <code>auto</code> for Cursor Auto.</span>
         </label>
 
         <label class="check">
