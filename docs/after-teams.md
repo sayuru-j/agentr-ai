@@ -12,7 +12,7 @@ curl -sS https://YOUR_DOMAIN/health
 ## B — PC worker online
 
 1. Copy `WORKER_TOKEN` from the VM.
-2. `npm run dev:tray`
+2. `npm run desktop:run` (or run `apps/desktop/publish/AgentR.exe`)
 3. Paste relay URL + token, add a project, **Save & connect**
 4. Status must be **online**
 

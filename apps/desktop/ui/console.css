@@ -1,0 +1,164 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #0c0d0f;
+  color: #d7dbdf;
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  background: #16181c;
+  border-bottom: 1px solid #2a2e35;
+  -webkit-app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.bar-drag {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f2f4f6;
+}
+
+.meta {
+  font-size: 11px;
+  color: #8b939c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-controls {
+  display: flex;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.bar-controls button {
+  width: 36px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: #b6bec8;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.bar-controls button:hover {
+  background: #2a2e35;
+}
+
+.bar-controls button.close:hover {
+  background: #b42318;
+  color: #fff;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #12141a;
+  border-bottom: 1px solid #2a2e35;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.toolbar input[type="search"] {
+  flex: 1;
+  min-width: 140px;
+  height: 28px;
+  border: 1px solid #2a2e35;
+  border-radius: 6px;
+  background: #0c0d0f;
+  color: #d7dbdf;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.tool {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #2a2e35;
+  border-radius: 6px;
+  background: #1a1d24;
+  color: #d7dbdf;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tool:hover {
+  background: #2a2e35;
+}
+
+.pins {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.pin {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid #5c2b2b;
+  border-radius: 999px;
+  background: #2a1515;
+  color: #f5a4a0;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pin.active {
+  border-color: #8ec8ff;
+  color: #8ec8ff;
+  background: #152033;
+}
+
+.out {
+  margin: 0;
+  padding: 12px 14px 20px;
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.out .stderr {
+  color: #f5a4a0;
+}
+
+.out .banner {
+  color: #8ec8ff;
+}

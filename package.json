@@ -20,6 +20,10 @@
     "dev:worker": "npm run start -w @agentr/worker",
     "dev:tray": "npm run start -w @agentr/tray",
     "pack:tray": "npm run pack:win -w @agentr/tray",
+    "desktop:build": "dotnet build apps/desktop/AgentR.slnx",
+    "desktop:run": "dotnet run --project apps/desktop/src/AgentR.Desktop/AgentR.Desktop.csproj",
+    "desktop:publish": "dotnet publish apps/desktop/src/AgentR.Desktop/AgentR.Desktop.csproj -c Release -r win-x64 --self-contained true -o apps/desktop/publish",
+    "desktop:msi": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pack-desktop-msi.ps1",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {

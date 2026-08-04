@@ -1,42 +1,42 @@
 # Desktop tray (Windows)
 
+The supported desktop app is a **.NET WPF + WebView2** tray host with an in-process C# worker. It reuses the same HTML UI and the same config path as before.
+
+Full build notes: [`apps/desktop/README.md`](../apps/desktop/README.md).
+
 ## Start (dev)
+
+Requires [.NET 10 SDK](https://dotnet.microsoft.com/download) and [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 
 ```powershell
 cd path\to\agentr-ai
-npm install
-npm run build
-npm run dev:tray
+npm run desktop:run
+# or:
+cd apps\desktop
+dotnet run --project src\AgentR.Desktop\AgentR.Desktop.csproj
 ```
 
-The **AgentR** settings window opens automatically when the worker token is missing.
+The **AgentR** settings window opens automatically when the worker token is missing (or when Start minimized is off).
 
-## Windows builds: Install vs Portable
+## Portable publish (recommended)
 
 ```powershell
-.\scripts\build.ps1 -Exe
-# or:
-npm run pack:tray
+npm run desktop:publish
+# → apps/desktop/publish/AgentR.exe
 ```
 
-Artifacts in `packages/tray/release/`:
+Self-contained `win-x64` folder — copy/run `AgentR.exe`. No Node/Electron required on the PC.
 
-| Artifact | When to use |
-|----------|-------------|
-| **`AgentR-*-portable.exe`** | No install. Double-click to run. Ideal for trying AgentR or keeping it on a USB drive. Config still goes to `%USERPROFILE%\.agent-relay\`. |
-| **`AgentR-*-win-x64.exe`** | One-click **NSIS installer** — Start Menu / desktop shortcuts. Prefer this for a daily driver on one PC. |
+## MSI installer
 
-Both builds are **unsigned** hobby packages (`signAndEditExecutable: false`):
+```powershell
+npm run desktop:msi
+# → apps/desktop/dist/AgentR-<version>-win-x64.msi
+```
 
-- Windows **SmartScreen** may warn on first run → *More info* → *Run anyway*.
-- Building the `.exe` yourself may need **Developer Mode** (symlink privilege) if electron-builder’s winCodeSign extract fails; end users of the finished `.exe` do **not** need Dev Mode.
-- Code signing (a purchased cert) would remove SmartScreen friction — not included in this hobby setup.
+Config always lives in `%USERPROFILE%\.agent-relay\config.json`.
 
-Config always lives in `%USERPROFILE%\.agent-relay\config.json` (same for portable and installed).
-
-**Dev tip:** After `npm run pack:tray`, `packages/tray/node_modules/@agentr` holds a snapshot for the installer. `npm run dev:tray` clears that folder so Electron uses the live workspace worker (otherwise `/get` and other new protocol messages silently time out).
-
-**Backup:** Settings → **Export config…** (or tray menu **Export config…**) copies that file to a path you choose. It includes the worker token — store the export privately.
+**Backup:** Settings → **Export config…** (or tray menu **Export config…**) copies that file. It includes the worker token — store privately.
 
 ## Configure
 
@@ -50,7 +50,7 @@ Config always lives in `%USERPROFILE%\.agent-relay\config.json` (same for portab
    - **Agent command** → leave as `agent`, or click **Find** (searches PATH and `%LOCALAPPDATA%\cursor-agent`)
    - **Projects** → alias → folder, optional per-project **model** / **dry run**
    - **Start with Windows** / **Start minimized to tray** / **Check for updates**
-   - Optional: enable global **Dry run** to test without Cursor CLI
+   - Optional: enable global **Dry run** to test without spawning the agent CLI
 3. Click **Save & connect**
 
 Home shows a **setup checklist**: token, agent CLI, relay online, paired in Teams.  
@@ -62,11 +62,12 @@ When the relay drops, Home shows a **connection banner** (reconnect countdown, u
 - Status + pairing code
 - **Open AgentR…** (settings)
 - **Reconnect**
+- Check for updates…
 - Open config folder
 - **Export config…**
 - Quit
 
-Double-click the tray icon to reopen settings. Click the pairing line to copy `/pair CODE`.
+Double-click the tray icon to reopen settings.
 
 ## Status meanings
 
@@ -79,7 +80,11 @@ Double-click the tray icon to reopen settings. Click the pairing line to copy `/
 
 Reconnect disconnect reasons call out **relay restart / network** vs **bad token**. After a relay restart with empty pairings, AgentR prompts you to send `/pair` again.
 
-## Headless worker (no UI)
+## Legacy Electron tray
+
+`packages/tray` + `npm run dev:tray` / `npm run pack:tray` remain in the repo for reference but are **deprecated**. Prefer `npm run desktop:run` / `npm run desktop:publish`.
+
+## Headless Node worker (optional/dev)
 
 ```powershell
 node packages/worker/dist/cli.js init

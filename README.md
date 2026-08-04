@@ -54,13 +54,18 @@ AgentR only replies to messages starting with `!` or `/`.
 ```bash
 npm install
 npm run build
-# or on Windows: .\scripts\build.ps1
-# Windows .exe:  .\scripts\build.ps1 -Exe   → packages/tray/release/
-#   portable.exe = no install · win-x64.exe = NSIS installer (both unsigned)
+# Desktop tray (.NET):
+npm run desktop:run
+# Portable win-x64 publish:
+npm run desktop:publish   # → apps/desktop/publish/AgentR.exe
+# MSI installer:
+npm run desktop:msi       # → apps/desktop/dist/AgentR-*-win-x64.msi
 
-npm run cli:setup      # on the VM
-npm run dev:tray       # on the PC (dev)
+# VM relay (Node):
+npm run cli:setup
 ```
+
+Legacy Electron tray: `npm run dev:tray` / `npm run pack:tray` (deprecated — see [desktop tray](./docs/desktop-tray.md)).
 
 Full guides: **[`docs/`](./docs/README.md)**
 

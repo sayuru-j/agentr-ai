@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="titlebar">
+      <div class="titlebar-drag">
+        <img class="title-logo" src="logo.png" alt="" width="22" height="22" />
+        <span class="title-wordmark">AgentR</span>
+        <span id="status-label" class="title-status">offline</span>
+      </div>
+      <div class="titlebar-controls">
+        <button type="button" id="win-min" aria-label="Minimize">─</button>
+        <button type="button" id="win-close" aria-label="Close" class="close">✕</button>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab active" data-tab="home" role="tab" aria-selected="true">
+        Home
+      </button>
+      <button type="button" class="tab" data-tab="projects" role="tab" aria-selected="false">
+        Projects
+      </button>
+      <button type="button" class="tab" data-tab="settings" role="tab" aria-selected="false">
+        Settings
+      </button>
+    </nav>
+
+    <div class="shell">
+      <!-- HOME -->
+      <section id="tab-home" class="tab-panel active" role="tabpanel">
+        <p class="pair-line">
+          <button type="button" id="pairing-btn" class="pair-btn">/pair --------</button>
+          <span class="muted">copy for Teams</span>
+        </p>
+
+        <div id="checklist" class="checklist" aria-label="Setup checklist">
+          <p class="checklist-title">Setup</p>
+          <ul class="checklist-list">
+            <li id="check-token" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label">Worker token set</span>
+            </li>
+            <li id="check-agent" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label" id="check-agent-label">Agent CLI found</span>
+            </li>
+            <li id="check-relay" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label">Relay connected</span>
+            </li>
+            <li id="check-paired" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label">Paired in Teams</span>
+            </li>
+            <li id="check-cli" data-ok="false">
+              <span class="check-mark" aria-hidden="true"></span>
+              <span class="check-label" id="check-cli-label">Agent CLI diagnosis OK</span>
+            </li>
+          </ul>
+          <p id="checklist-hint" class="checklist-hint"></p>
+          <p id="checklist-ready" class="checklist-ready" hidden>Ready — send <code>!alias your prompt</code> in Teams.</p>
+        </div>
+
+        <div id="connection-banner" class="connection-banner" hidden>
+          <p id="connection-text" class="connection-text"></p>
+        </div>
+
+        <div id="update-banner" class="update-banner" hidden>
+          <p id="update-text" class="update-text"></p>
+          <button type="button" id="update-open" class="text-btn">Download</button>
+        </div>
+
+        <p id="lock-banner" class="lock-banner" hidden>
+          Screen is locked — new tasks and <code>/ss</code> are blocked until you unlock Windows.
+        </p>
+
+        <p class="hint">
+          Status updates live. Pair in Teams, then send
+          <code>!alias your prompt</code>. Fetch files with
+          <code>!alias /get path</code>. Use <code>/ss</code> or <code>/sshq</code> for screenshots.
+          AgentR ignores messages without <code>!</code> or <code>/</code>.
+        </p>
+        <div class="home-actions">
+          <button type="button" id="reconnect" class="btn">Reconnect</button>
+          <button type="button" id="save-home" class="btn btn-main">Save &amp; connect</button>
+        </div>
+        <p id="save-msg" class="save-msg" hidden></p>
+      </section>
+
+      <!-- PROJECTS -->
+      <section id="tab-projects" class="tab-panel" role="tabpanel" hidden>
+        <div class="row between">
+          <p class="hint" style="margin: 0">Aliases for Teams (<code>!alias</code>)</p>
+          <button type="button" id="add-project" class="text-btn">Add project</button>
+        </div>
+        <div id="projects" class="projects"></div>
+        <p id="projects-empty" class="empty">No projects yet. Add one to get started.</p>
+        <div class="home-actions">
+          <button type="button" id="save-projects" class="btn btn-main">Save projects</button>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="tab-settings" class="tab-panel" role="tabpanel" hidden>
+        <label class="field">
+          <span>Relay URL</span>
+          <input
+            id="relayUrl"
+            type="url"
+            spellcheck="false"
+            placeholder="wss://your-domain/ws"
+            autocomplete="off"
+          />
+        </label>
+
+        <label class="field">
+          <span>Worker token</span>
+          <p id="token-saved" class="saved" hidden></p>
+          <div class="row">
+            <input
+              id="workerToken"
+              type="password"
+              spellcheck="false"
+              placeholder="Paste token from VM"
+              autocomplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+            />
+            <button type="button" id="toggle-token" class="text-btn">Show</button>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Agent backend</span>
+          <select id="agentBackend">
+            <option value="cursor">Cursor CLI (agent)</option>
+            <option value="codex">OpenAI Codex CLI</option>
+          </select>
+          <span class="hint">Which local CLI runs Teams tasks on this PC.</span>
+        </label>
+
+        <label class="field">
+          <span>Agent command</span>
+          <div class="row">
+            <input id="agentCommand" type="text" spellcheck="false" value="agent" />
+            <button type="button" id="find-agent" class="text-btn">Find</button>
+            <button type="button" id="test-agent" class="text-btn">Test CLI</button>
+          </div>
+          <span id="agent-hint" class="hint">Searches PATH and common install folders.</span>
+          <pre id="agent-diagnosis" class="diagnosis" hidden></pre>
+        </label>
+
+        <label class="field">
+          <span>Model</span>
+          <input
+            id="agentModel"
+            type="text"
+            spellcheck="false"
+            value="auto"
+            placeholder="auto"
+          />
+          <span id="model-hint" class="hint">Use <code>auto</code> for Cursor Auto.</span>
+        </label>
+
+        <label class="check">
+          <input id="dryRun" type="checkbox" />
+          <span>Dry run (global default)</span>
+        </label>
+
+        <label class="check">
+          <input id="blockTasksWhenLocked" type="checkbox" checked />
+          <span>Block tasks when Windows is locked</span>
+        </label>
+
+        <label class="check">
+          <input id="includeGitContext" type="checkbox" checked />
+          <span>Include git branch/status in prompts</span>
+        </label>
+
+        <label class="check">
+          <input id="approvalScreenshot" type="checkbox" />
+          <span>Screenshot desktop on approval requests</span>
+        </label>
+
+        <label class="field">
+          <span>Max runtime (minutes, 0 = off)</span>
+          <input id="maxRuntimeMinutes" type="number" min="0" step="1" value="0" />
+        </label>
+
+        <label class="field">
+          <span>Global prompt shortcuts (JSON)</span>
+          <textarea id="globalPrompts" rows="3" spellcheck="false" placeholder='{"fix-tests": "Run tests and fix failures"}'></textarea>
+        </label>
+
+        <label class="check">
+          <input id="openAtLogin" type="checkbox" />
+          <span>Start with Windows</span>
+        </label>
+
+        <label class="check">
+          <input id="startMinimized" type="checkbox" />
+          <span>Start minimized to tray</span>
+        </label>
+
+        <label class="check">
+          <input id="checkUpdates" type="checkbox" />
+          <span>Check GitHub Releases for updates</span>
+        </label>
+
+        <div class="home-actions">
+          <button type="button" id="export-config" class="btn">Export config…</button>
+          <button type="button" id="check-updates-now" class="btn">Check updates</button>
+          <button type="button" id="save-settings" class="btn btn-main">Save &amp; connect</button>
+        </div>
+      </section>
+    </div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

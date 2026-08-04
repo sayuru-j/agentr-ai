@@ -1,0 +1,556 @@
+/* global agentr API from preload */
+const $ = (id) => document.getElementById(id);
+
+/** Last token loaded from disk — kept if the password field is left blank on save. */
+let savedToken = "";
+
+function projectRow(alias = "", path = "", agentModel = "", dryRun = false, guardrails = {}, prompts = {}) {
+  const gr = guardrails || {};
+  const deny = Array.isArray(gr.denyPatterns) ? gr.denyPatterns.join("\n") : "";
+  const promptsJson = prompts && Object.keys(prompts).length
+    ? JSON.stringify(prompts, null, 2)
+    : "";
+  const row = document.createElement("div");
+  row.className = "project-row";
+  row.innerHTML = `
+    <div class="project-main">
+      <input class="alias" type="text" spellcheck="false" placeholder="alias" value="${escapeAttr(alias)}" />
+      <input class="path" type="text" spellcheck="false" placeholder="No folder selected" value="${escapeAttr(path)}" readonly />
+      <button type="button" class="browse">Browse</button>
+      <button type="button" class="remove" aria-label="Remove">×</button>
+    </div>
+    <div class="project-opts">
+      <label class="mini">
+        <span>Model</span>
+        <input class="model" type="text" spellcheck="false" placeholder="inherit" value="${escapeAttr(agentModel)}" />
+      </label>
+      <label class="mini check">
+        <input class="dry" type="checkbox" ${dryRun ? "checked" : ""} />
+        <span>Dry run</span>
+      </label>
+      <label class="mini check">
+        <input class="read-only" type="checkbox" ${gr.readOnly ? "checked" : ""} />
+        <span>Read-only</span>
+      </label>
+      <label class="mini check">
+        <input class="block-lock" type="checkbox" ${gr.blockWhenLocked !== false ? "checked" : ""} />
+        <span>Block when locked</span>
+      </label>
+    </div>
+    <label class="mini field-block">
+      <span>Max runtime (min, 0=inherit)</span>
+      <input class="max-runtime" type="number" min="0" step="1" value="${gr.maxRuntimeMinutes || 0}" />
+    </label>
+    <label class="mini field-block">
+      <span>Deny patterns (regex, one per line)</span>
+      <textarea class="deny-patterns" rows="2" spellcheck="false">${escapeAttr(deny)}</textarea>
+    </label>
+    <label class="mini field-block">
+      <span>Prompt shortcuts (JSON)</span>
+      <textarea class="prompts-json" rows="2" spellcheck="false" placeholder='{"fix-tests": "..."}'>${escapeAttr(promptsJson)}</textarea>
+    </label>
+  `;
+  row.querySelector(".remove").addEventListener("click", () => {
+    row.remove();
+    updateProjectsEmpty();
+  });
+  row.querySelector(".browse").addEventListener("click", async () => {
+    const picked = await window.agentr.pickFolder();
+    if (picked) {
+      row.querySelector(".path").value = picked;
+    }
+  });
+  return row;
+}
+
+function escapeAttr(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function addProject(alias = "", path = "", agentModel = "", dryRun = false, guardrails = {}, prompts = {}) {
+  $("projects").appendChild(projectRow(alias, path, agentModel, dryRun, guardrails, prompts));
+  updateProjectsEmpty();
+}
+
+function updateProjectsEmpty() {
+  const empty = $("projects").children.length === 0;
+  $("projects-empty").hidden = !empty;
+}
+
+function readProjects() {
+  const out = {};
+  for (const row of $("projects").querySelectorAll(".project-row")) {
+    const alias = row.querySelector(".alias").value.trim();
+    const path = row.querySelector(".path").value.trim();
+    if (!alias || !path) continue;
+    const agentModel = row.querySelector(".model").value.trim();
+    const dryRun = row.querySelector(".dry").checked;
+    const entry = { path };
+    if (agentModel) entry.agentModel = agentModel;
+    if (dryRun) entry.dryRun = true;
+    const readOnly = row.querySelector(".read-only").checked;
+    const blockWhenLocked = row.querySelector(".block-lock").checked;
+    const maxRuntime = parseInt(row.querySelector(".max-runtime").value, 10) || 0;
+    const denyRaw = row.querySelector(".deny-patterns").value.trim();
+    const denyPatterns = denyRaw
+      ? denyRaw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      : [];
+    const guardrails = {};
+    if (readOnly) guardrails.readOnly = true;
+    if (!blockWhenLocked) guardrails.blockWhenLocked = false;
+    if (maxRuntime > 0) guardrails.maxRuntimeMinutes = maxRuntime;
+    if (denyPatterns.length) guardrails.denyPatterns = denyPatterns;
+    if (Object.keys(guardrails).length) entry.guardrails = guardrails;
+    const promptsRaw = row.querySelector(".prompts-json").value.trim();
+    if (promptsRaw) {
+      try {
+        const parsed = JSON.parse(promptsRaw);
+        if (parsed && typeof parsed === "object") entry.prompts = parsed;
+      } catch {
+        /* skip invalid JSON on save */
+      }
+    }
+    out[alias] = entry;
+  }
+  return out;
+}
+
+function setStatus(status, pairingCode, checklist, extra = {}) {
+  const el = $("status-label");
+  el.textContent = status;
+  el.className = `title-status ${status}`;
+  $("pairing-btn").textContent = `/pair ${pairingCode || "--------"}`;
+  $("pairing-btn").dataset.code = pairingCode || "";
+  if (checklist) renderChecklist(checklist);
+  renderUpdate(extra.update);
+  renderConnection(extra.connection);
+  $("lock-banner").hidden = !extra.sessionLocked;
+}
+
+function renderConnection(connection) {
+  const banner = $("connection-banner");
+  if (!banner) return;
+  if (!connection || connection.kind === "ok") {
+    banner.hidden = true;
+    banner.dataset.kind = "";
+    return;
+  }
+  banner.hidden = false;
+  banner.dataset.kind = connection.kind;
+  let text = "";
+  switch (connection.kind) {
+    case "connecting":
+      text = connection.detail || "Connecting to relay…";
+      break;
+    case "reconnecting": {
+      const secs = Math.max(1, Math.round((connection.inMs || 0) / 1000));
+      text = `${connection.reason || "Connection lost"} — retry #${connection.attempt} in ${secs}s. If the relay restarted, wait; then re-pair in Teams if needed.`;
+      break;
+    }
+    case "unauthorized":
+      text = connection.message || "Worker token rejected. Paste WORKER_TOKEN from the VM.";
+      break;
+    case "re_pair":
+      text = `${connection.message || "Re-pair needed."} Send /pair ${connection.pairingCode || ""} in Teams.`;
+      break;
+    case "offline":
+      text = connection.reason || "Offline";
+      break;
+    default:
+      text = "Connection issue";
+  }
+  $("connection-text").textContent = text;
+}
+
+function renderUpdate(update) {
+  const banner = $("update-banner");
+  if (!update?.updateAvailable) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  $("update-text").textContent =
+    `Update v${update.remoteVersion} available (you have v${update.localVersion}).`;
+}
+
+function renderChecklist(checklist) {
+  const items = [
+    {
+      id: "check-token",
+      ok: checklist.tokenSet,
+      hint: "Paste WORKER_TOKEN from the VM in Settings.",
+    },
+    {
+      id: "check-agent",
+      ok: checklist.agentFound,
+      hint: checklist.agent?.found
+        ? `Using ${checklist.agent.command}`
+        : checklist.agent?.backend === "codex"
+          ? "Install Codex CLI (`npm i -g @openai/codex`), or click Find in Settings."
+          : "Install Cursor Agent CLI, or click Find in Settings.",
+    },
+    {
+      id: "check-relay",
+      ok: checklist.relayOk,
+      hint: "Save & connect, then wait until status is online.",
+    },
+    {
+      id: "check-paired",
+      ok: checklist.paired,
+      hint: "In Teams send the /pair code from above.",
+    },
+    {
+      id: "check-cli",
+      ok: checklist.diagnosis?.ok ?? checklist.agentFound,
+      hint:
+        checklist.diagnosis?.errors?.[0] ||
+        checklist.diagnosis?.warnings?.[0] ||
+        "Click Test CLI in Settings.",
+    },
+  ];
+
+  let firstFailHint = "";
+  for (const item of items) {
+    const li = $(item.id);
+    if (!li) continue;
+    li.dataset.ok = item.ok ? "true" : "false";
+    if (!item.ok && !firstFailHint) firstFailHint = item.hint;
+  }
+
+  const ready = $("checklist-ready");
+  const hint = $("checklist-hint");
+  if (checklist.allOk) {
+    ready.hidden = false;
+    hint.hidden = true;
+    hint.textContent = "";
+  } else {
+    ready.hidden = true;
+    hint.hidden = false;
+    hint.textContent = firstFailHint;
+  }
+
+  if (checklist.agent?.found && checklist.agent.detail) {
+    $("agent-hint").textContent = `Found (${checklist.agent.source}): ${checklist.agent.detail}`;
+  }
+  if (checklist.agent?.backend) {
+    const label = $("check-agent-label");
+    if (label) {
+      label.textContent =
+        checklist.agent.backend === "codex"
+          ? "Codex CLI found"
+          : "Cursor agent CLI found";
+    }
+  }
+}
+
+function updateTokenSavedLabel(token) {
+  const el = $("token-saved");
+  if (!token) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.textContent = `Saved ····${token.slice(-4)} (${token.length} chars)`;
+}
+
+function applyBackendHints(backend) {
+  const isCodex = backend === "codex";
+  $("agent-hint").textContent = isCodex
+    ? "Searches PATH and common Codex install folders. Auth: CODEX_API_KEY or codex login."
+    : "Searches PATH and %LOCALAPPDATA%\\cursor-agent.";
+  $("model-hint").innerHTML = isCodex
+    ? "Codex model id (for example <code>gpt-5.4</code>)."
+    : "Use <code>auto</code> for Cursor Auto (avoids expensive picks).";
+  $("agentModel").placeholder = isCodex ? "gpt-5.4" : "auto";
+  const label = $("check-agent-label");
+  if (label) {
+    label.textContent = isCodex ? "Codex CLI found" : "Cursor agent CLI found";
+  }
+}
+
+function onBackendChange(resetDefaults) {
+  const backend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+  applyBackendHints(backend);
+  if (!resetDefaults) return;
+  const cmd = $("agentCommand").value.trim();
+  const model = $("agentModel").value.trim();
+  const wrongForBackend =
+    backend === "codex"
+      ? /cursor-agent|[/\\]agent\.(cmd|exe|bat)$/i.test(cmd)
+      : /[/\\]codex\.(cmd|exe|bat)$/i.test(cmd);
+  if (wrongForBackend || !cmd || cmd === "agent" || cmd === "codex") {
+    $("agentCommand").value = backend === "codex" ? "codex" : "agent";
+  }
+  if (!model || model === "auto" || model === "gpt-5.4") {
+    $("agentModel").value = backend === "codex" ? "gpt-5.4" : "auto";
+  }
+  void autoFindAgent(backend);
+}
+
+async function autoFindAgent(backend) {
+  const result = await window.agentr.resolveAgent(
+    $("agentCommand").value,
+    backend,
+  );
+  if (result.found) {
+    $("agentCommand").value = result.command;
+    $("agent-hint").textContent = `Found (${result.source}): ${result.detail || result.command}`;
+  } else {
+    $("agent-hint").textContent =
+      backend === "codex"
+        ? "Codex not found. Install it (`npm i -g @openai/codex`) or paste the full path."
+        : "Not found. Install Cursor Agent CLI, or paste the full path to agent.cmd.";
+  }
+}
+
+function fillForm(config) {
+  savedToken = (config.workerToken || "").trim();
+  $("relayUrl").value = config.relayUrl || "";
+  $("workerToken").value = savedToken;
+  $("agentBackend").value =
+    config.agentBackend === "codex" ? "codex" : "cursor";
+  $("agentCommand").value =
+    config.agentCommand ||
+    (config.agentBackend === "codex" ? "codex" : "agent");
+  $("agentModel").value =
+    config.agentModel ||
+    (config.agentBackend === "codex" ? "gpt-5.4" : "auto");
+  $("dryRun").checked = Boolean(config.dryRun);
+  $("blockTasksWhenLocked").checked = config.blockTasksWhenLocked !== false;
+  $("includeGitContext").checked = config.includeGitContext !== false;
+  $("approvalScreenshot").checked = Boolean(config.approvalScreenshot);
+  $("maxRuntimeMinutes").value = String(config.maxRuntimeMinutes || 0);
+  $("globalPrompts").value = config.prompts
+    ? JSON.stringify(config.prompts, null, 2)
+    : "";
+  $("openAtLogin").checked = Boolean(config.openAtLogin);
+  $("startMinimized").checked = config.startMinimized !== false;
+  $("checkUpdates").checked = config.checkUpdates !== false;
+  updateTokenSavedLabel(savedToken);
+  $("projects").innerHTML = "";
+  const entries = Object.entries(config.projects || {});
+  for (const [alias, entry] of entries) {
+    if (typeof entry === "string") {
+      addProject(alias, entry);
+    } else {
+      addProject(
+        alias,
+        entry.path || "",
+        entry.agentModel || "",
+        Boolean(entry.dryRun),
+        entry.guardrails || {},
+        entry.prompts || {},
+      );
+    }
+  }
+  updateProjectsEmpty();
+  applyBackendHints($("agentBackend").value);
+  const backend = config.agentBackend === "codex" ? "codex" : "cursor";
+  const cmd = $("agentCommand").value.trim();
+  if (
+    backend === "codex" &&
+    /cursor-agent|[/\\]agent\.(cmd|exe|bat)$/i.test(cmd)
+  ) {
+    void autoFindAgent(backend);
+  }
+}
+
+function readForm() {
+  const typed = $("workerToken").value.trim();
+  const agentBackend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+  let prompts;
+  const promptsRaw = $("globalPrompts").value.trim();
+  if (promptsRaw) {
+    try {
+      prompts = JSON.parse(promptsRaw);
+    } catch {
+      throw new Error("Global prompt shortcuts must be valid JSON");
+    }
+  }
+  return {
+    relayUrl: $("relayUrl").value.trim(),
+    workerToken: typed || savedToken,
+    agentBackend,
+    agentCommand:
+      $("agentCommand").value.trim() ||
+      (agentBackend === "codex" ? "codex" : "agent"),
+    agentModel:
+      $("agentModel").value.trim() ||
+      (agentBackend === "codex" ? "gpt-5.4" : "auto"),
+    dryRun: $("dryRun").checked,
+    blockTasksWhenLocked: $("blockTasksWhenLocked").checked,
+    includeGitContext: $("includeGitContext").checked,
+    approvalScreenshot: $("approvalScreenshot").checked,
+    maxRuntimeMinutes: parseInt($("maxRuntimeMinutes").value, 10) || 0,
+    prompts,
+    openAtLogin: $("openAtLogin").checked,
+    startMinimized: $("startMinimized").checked,
+    checkUpdates: $("checkUpdates").checked,
+    projects: readProjects(),
+  };
+}
+
+function showMsg(text, isError = false) {
+  const el = $("save-msg");
+  el.hidden = false;
+  el.textContent = text;
+  el.classList.toggle("error", isError);
+  clearTimeout(showMsg._t);
+  showMsg._t = setTimeout(() => {
+    el.hidden = true;
+  }, 4000);
+}
+
+function switchTab(name) {
+  for (const btn of document.querySelectorAll(".tab")) {
+    const on = btn.dataset.tab === name;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  for (const panel of document.querySelectorAll(".tab-panel")) {
+    const on = panel.id === `tab-${name}`;
+    panel.classList.toggle("active", on);
+    panel.hidden = !on;
+  }
+}
+
+async function saveAll(connect = true) {
+  const cfg = readForm();
+  if (!cfg.relayUrl) {
+    showMsg("Relay URL required", true);
+    switchTab("settings");
+    return;
+  }
+  if (!cfg.workerToken) {
+    showMsg("Token required", true);
+    switchTab("settings");
+    return;
+  }
+  try {
+    const saved = await window.agentr.saveConfig(cfg);
+    savedToken = saved.workerToken;
+    $("workerToken").value = savedToken;
+    updateTokenSavedLabel(savedToken);
+    $("agentCommand").value = saved.agentCommand || $("agentCommand").value;
+    const live = await window.agentr.getStatus();
+    setStatus(live.status, live.pairingCode, live.checklist, live);
+    showMsg(connect ? "Saved — connecting…" : "Projects saved");
+  } catch (err) {
+    showMsg(err?.message || "Save failed", true);
+  }
+}
+
+async function boot() {
+  $("win-min").addEventListener("click", () => window.agentr.windowMinimize());
+  $("win-close").addEventListener("click", () => window.agentr.windowClose());
+
+  for (const btn of document.querySelectorAll(".tab")) {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  }
+
+  const [config, live] = await Promise.all([
+    window.agentr.getConfig(),
+    window.agentr.getStatus(),
+  ]);
+  fillForm(config);
+  setStatus(live.status, live.pairingCode, live.checklist, live);
+
+  window.agentr.onStatus((payload) => {
+    setStatus(payload.status, payload.pairingCode, payload.checklist, payload);
+  });
+
+  $("add-project").addEventListener("click", () => addProject());
+  $("toggle-token").addEventListener("click", () => {
+    const input = $("workerToken");
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    $("toggle-token").textContent = show ? "Hide" : "Show";
+  });
+
+  $("find-agent").addEventListener("click", async () => {
+    const backend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+    const result = await window.agentr.resolveAgent(
+      $("agentCommand").value,
+      backend,
+    );
+    if (result.found) {
+      $("agentCommand").value = result.command;
+      $("agent-hint").textContent = `Found (${result.source}): ${result.detail || result.command}`;
+      showMsg("Agent CLI found — Save & connect to keep it");
+    } else {
+      $("agent-hint").textContent =
+        backend === "codex"
+          ? "Not found. Install Codex CLI, set CODEX_API_KEY, or paste the full path to codex."
+          : "Not found. Install Cursor Agent CLI, or paste the full path to agent.cmd.";
+      showMsg("Agent CLI not found", true);
+    }
+  });
+
+  $("test-agent").addEventListener("click", async () => {
+    const backend = $("agentBackend").value === "codex" ? "codex" : "cursor";
+    const d = await window.agentr.diagnoseAgent($("agentCommand").value, backend);
+    const el = $("agent-diagnosis");
+    const lines = [
+      d.ok ? "OK" : "FAILED",
+      d.version ? `version: ${d.version}` : "",
+      d.command ? `command: ${d.command}` : "",
+      ...(d.errors || []).map((e) => `error: ${e}`),
+      ...(d.warnings || []).map((w) => `warn: ${w}`),
+    ].filter(Boolean);
+    el.textContent = lines.join("\n");
+    el.hidden = false;
+    showMsg(d.ok ? "CLI diagnosis passed" : "CLI diagnosis failed", !d.ok);
+  });
+
+  $("agentBackend").addEventListener("change", () => onBackendChange(true));
+
+  $("pairing-btn").addEventListener("click", async () => {
+    const code = $("pairing-btn").dataset.code;
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(`/pair ${code}`);
+      showMsg("Copied");
+    } catch {
+      showMsg("Could not copy", true);
+    }
+  });
+
+  $("update-open").addEventListener("click", () => window.agentr.openUpdate());
+  $("export-config").addEventListener("click", async () => {
+    const result = await window.agentr.exportConfig();
+    if (result.ok) {
+      showMsg(`Exported to ${result.path}`);
+    } else if (result.error && result.error !== "Cancelled") {
+      showMsg(result.error, true);
+    }
+  });
+  $("check-updates-now").addEventListener("click", async () => {
+    const result = await window.agentr.checkUpdates();
+    renderUpdate(result);
+    showMsg(
+      result.updateAvailable
+        ? `Update v${result.remoteVersion} available`
+        : result.error || "You're up to date",
+      Boolean(result.error && !result.updateAvailable),
+    );
+  });
+
+  $("save-home").addEventListener("click", () => saveAll(true));
+  $("save-settings").addEventListener("click", () => saveAll(true));
+  $("save-projects").addEventListener("click", () => saveAll(false));
+
+  $("reconnect").addEventListener("click", async () => {
+    await window.agentr.reconnect();
+    showMsg("Reconnecting…");
+  });
+}
+
+boot().catch((err) => {
+  console.error(err);
+  showMsg(err?.message || "Failed to load", true);
+});

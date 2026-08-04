@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AgentR.Desktop/AgentR.Desktop.csproj" />
+    <Project Path="src/AgentR.Protocol/AgentR.Protocol.csproj" />
+    <Project Path="src/AgentR.Worker/AgentR.Worker.csproj" />
+  </Folder>
+</Solution>

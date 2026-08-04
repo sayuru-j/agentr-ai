@@ -11,6 +11,10 @@ Thumbs.db
 packages/tray/out/
 packages/tray/release/
 packages/tray/node_modules/@agentr/
+apps/desktop/publish/
+apps/desktop/dist/
+apps/desktop/**/bin/
+apps/desktop/**/obj/
 packages/cli/agentr-teams.zip
 .agent-relay/
 agent-relay-out/
