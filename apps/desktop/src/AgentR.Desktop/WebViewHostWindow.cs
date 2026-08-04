@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Shell;
 using Microsoft.Web.WebView2.Core;
@@ -65,6 +66,8 @@ internal sealed class WebViewHostWindow : Window
         UseLayoutRounding = true;
         ShowInTaskbar = true;
         Background = BrushFrom(background);
+        if (AppIcons.WindowIcon is { } winIcon)
+            Icon = winIcon;
         _htmlPath = htmlPath;
         _invoke = invoke;
         _hideOnClose = hideOnClose;
@@ -253,6 +256,31 @@ internal sealed class WebViewHostWindow : Window
             Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        if (AppIcons.LogoPngPath is { } logoPath)
+        {
+            try
+            {
+                var logoBmp = new BitmapImage();
+                logoBmp.BeginInit();
+                logoBmp.CacheOption = BitmapCacheOption.OnLoad;
+                logoBmp.UriSource = new Uri(logoPath, UriKind.Absolute);
+                logoBmp.DecodePixelWidth = 44;
+                logoBmp.EndInit();
+                logoBmp.Freeze();
+                wordmark.Children.Add(new System.Windows.Controls.Image
+                {
+                    Source = logoBmp,
+                    Width = 22,
+                    Height = 22,
+                    Margin = new Thickness(0, 0, 10, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
+            catch
+            {
+                // text-only fallback
+            }
+        }
         wordmark.Children.Add(new TextBlock
         {
             Text = title,

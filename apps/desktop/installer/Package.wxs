@@ -38,7 +38,9 @@
           Name="AgentR"
           Description="Open AgentR settings"
           Target="[INSTALLFOLDER]AgentR.exe"
-          WorkingDirectory="INSTALLFOLDER" />
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="AgentRIcon"
+          IconIndex="0" />
         <RemoveFolder Id="RemoveProgramMenuDir" Directory="ApplicationProgramsFolder" On="uninstall" />
         <RegistryValue
           Root="HKCU"
@@ -49,5 +51,7 @@
           KeyPath="yes" />
       </Component>
     </Feature>
+
+    <Icon Id="AgentRIcon" SourceFile="..\assets\logo.ico" />
   </Package>
 </Wix>

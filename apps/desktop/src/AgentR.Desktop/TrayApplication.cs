@@ -193,7 +193,7 @@ internal sealed class TrayApplication : IDisposable
 
     private void CreateTray()
     {
-        _trayIconImage = LoadTrayIcon();
+        _trayIconImage = AppIcons.LoadTrayIcon();
         _notifyIcon = new NotifyIcon
         {
             Text = "AgentR",
@@ -201,27 +201,6 @@ internal sealed class TrayApplication : IDisposable
             Icon = _trayIconImage,
         };
         _notifyIcon.DoubleClick += (_, _) => OpenSettings();
-    }
-
-    private static Icon LoadTrayIcon()
-    {
-        try
-        {
-            var logo = UiPaths.LogoPath;
-            if (logo is not null)
-            {
-                using var bmp = new Bitmap(logo);
-                using var small = new Bitmap(bmp, new System.Drawing.Size(16, 16));
-                var hIcon = small.GetHicon();
-                using var temp = Icon.FromHandle(hIcon);
-                return (Icon)temp.Clone();
-            }
-        }
-        catch
-        {
-            // fall through
-        }
-        return (Icon)SystemIcons.Application.Clone();
     }
 
     private void RebuildMenu()
