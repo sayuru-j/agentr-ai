@@ -1,10 +1,23 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
 using System.Windows.Shell;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using Brushes = System.Windows.Media.Brushes;
+using Button = System.Windows.Controls.Button;
+using Color = System.Windows.Media.Color;
+using Cursors = System.Windows.Input.Cursors;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using Orientation = System.Windows.Controls.Orientation;
+using Point = System.Windows.Point;
+using VerticalAlignment = System.Windows.VerticalAlignment;
 
 namespace AgentR.Desktop;
 
@@ -16,12 +29,19 @@ internal sealed class WebViewHostWindow : Window
     private static CoreWebView2Environment? SharedEnvironment;
     private static readonly SemaphoreSlim EnvLock = new(1, 1);
 
+    // Keep Visible — Collapsed WebView2 often stalls navigation / JS.
     private readonly WebView2 _webView = new() { Margin = new Thickness(0) };
+    private readonly Grid _root = new();
+    private readonly Border _loader;
     private readonly string _htmlPath;
     private readonly Func<string, object?[], Task<object?>> _invoke;
     private readonly bool _hideOnClose;
-    private bool _ready;
+    private readonly TaskCompletionSource _readyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _bridgeReady;
+    private bool _uiReady;
     private bool _forceClose;
+    private bool _initStarted;
+    private bool _wantVisible;
 
     public WebViewHostWindow(
         string title,
@@ -43,13 +63,12 @@ internal sealed class WebViewHostWindow : Window
         ResizeMode = ResizeMode.CanResize;
         SnapsToDevicePixels = true;
         UseLayoutRounding = true;
-        Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(background)!;
-        Content = _webView;
+        ShowInTaskbar = true;
+        Background = BrushFrom(background);
         _htmlPath = htmlPath;
         _invoke = invoke;
         _hideOnClose = hideOnClose;
 
-        // Kill the default caption strip that shows above frameless + resizable windows.
         WindowChrome.SetWindowChrome(this, new WindowChrome
         {
             CaptionHeight = 0,
@@ -59,13 +78,22 @@ internal sealed class WebViewHostWindow : Window
             UseAeroCaptionButtons = false,
         });
 
+        var accent = background.Equals("#16181c", StringComparison.OrdinalIgnoreCase) ? "#d7dbdf" : "#1a1917";
+        _loader = BuildLoader(title, background, accent);
+        _root.Children.Add(_webView);
+        _root.Children.Add(_loader);
+        Content = _root;
+
         Closing += OnClosing;
-        Loaded += async (_, _) => await InitAsync();
+        ContentRendered += (_, _) => EnsureInitStarted();
+        Loaded += (_, _) => EnsureInitStarted();
     }
 
-    public bool IsReady => _ready;
+    public bool IsReady => _uiReady;
+    public Task WhenReady => _readyTcs.Task;
 
-    /// <summary>Destroy the window for real (app shutdown).</summary>
+    public event Action? UiReady;
+
     public void ForceClose()
     {
         _forceClose = true;
@@ -78,7 +106,42 @@ internal sealed class WebViewHostWindow : Window
         {
             e.Cancel = true;
             Hide();
+            _wantVisible = false;
         }
+    }
+
+    private void EnsureInitStarted()
+    {
+        if (_initStarted) return;
+        _initStarted = true;
+        _ = InitAsync();
+    }
+
+    /// <summary>Warm WebView behind the scenes without activating the window.</summary>
+    public void PreloadHidden()
+    {
+        _wantVisible = false;
+        ShowActivated = false;
+        ShowInTaskbar = false;
+        Opacity = 0;
+        Show();
+        EnsureInitStarted();
+        _ = FinishPreloadAsync();
+    }
+
+    private async Task FinishPreloadAsync()
+    {
+        try { await WhenReady.ConfigureAwait(true); }
+        catch { /* keep going */ }
+
+        // If the user opened the window while we were preloading, leave it alone.
+        if (_wantVisible) return;
+        if (Opacity > 0.01 && IsVisible) return;
+
+        Hide();
+        Opacity = 1;
+        ShowInTaskbar = true;
+        ShowActivated = true;
     }
 
     private static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync()
@@ -96,20 +159,215 @@ internal sealed class WebViewHostWindow : Window
         }
     }
 
+    public static Task WarmEnvironmentAsync() => GetSharedEnvironmentAsync();
+
     private async Task InitAsync()
     {
-        if (_ready) return;
-        var env = await GetSharedEnvironmentAsync().ConfigureAwait(true);
-        await _webView.EnsureCoreWebView2Async(env).ConfigureAwait(true);
-        _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-        _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-        await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(AgentrBridgeScript.Source)
-            .ConfigureAwait(true);
-        _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-        var uri = new Uri(Path.GetFullPath(_htmlPath)).AbsoluteUri;
-        _webView.CoreWebView2.Navigate(uri);
-        _ready = true;
+        if (_uiReady) return;
+        try
+        {
+            var env = await GetSharedEnvironmentAsync().ConfigureAwait(true);
+            await _webView.EnsureCoreWebView2Async(env).ConfigureAwait(true);
+            _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
+            await _webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(AgentrBridgeScript.Source)
+                .ConfigureAwait(true);
+            _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+            // Allow bridge replies as soon as the host object path exists — page JS
+            // starts calling getConfig/getStatus during load, before NavigationCompleted.
+            _bridgeReady = true;
+
+            var navDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnNav(object? s, CoreWebView2NavigationCompletedEventArgs e)
+            {
+                _webView.CoreWebView2.NavigationCompleted -= OnNav;
+                if (e.IsSuccess) navDone.TrySetResult();
+                else navDone.TrySetException(new InvalidOperationException($"Navigation failed ({e.WebErrorStatus})"));
+            }
+            _webView.CoreWebView2.NavigationCompleted += OnNav;
+
+            var uri = new Uri(System.IO.Path.GetFullPath(_htmlPath)).AbsoluteUri;
+            _webView.CoreWebView2.Navigate(uri);
+            await navDone.Task.ConfigureAwait(true);
+
+            _loader.Visibility = Visibility.Collapsed;
+            _uiReady = true;
+            _readyTcs.TrySetResult();
+            UiReady?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _readyTcs.TrySetException(ex);
+            SetLoaderError(ex.Message);
+        }
     }
+
+    private void SetLoaderError(string message)
+    {
+        if (_loader.Child is not Grid grid) return;
+        foreach (var child in grid.Children)
+        {
+            if (child is StackPanel panel)
+            {
+                foreach (var c in panel.Children)
+                {
+                    if (c is TextBlock tb && Equals(tb.Tag, "hint"))
+                    {
+                        tb.Text = "Failed to load UI: " + message;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private Border BuildLoader(string title, string background, string accent)
+    {
+        var bg = BrushFrom(background);
+        var fg = BrushFrom(accent);
+        var muted = new SolidColorBrush(Color.FromRgb(0x8a, 0x85, 0x7c));
+        var barBg = background.Equals("#16181c", StringComparison.OrdinalIgnoreCase)
+            ? BrushFrom("#16181c")
+            : BrushFrom("#ffffff");
+        var line = new SolidColorBrush(Color.FromRgb(0xe4, 0xe1, 0xda));
+
+        var titleBar = new Border
+        {
+            Height = 44,
+            Background = barBg,
+            BorderBrush = line,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            VerticalAlignment = VerticalAlignment.Top,
+            Cursor = Cursors.SizeAll,
+        };
+        titleBar.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ChangedButton != MouseButton.Left) return;
+            if (e.OriginalSource is DependencyObject d && FindAncestor<Button>(d) is not null) return;
+            try { DragMove(); } catch { BeginDrag(); }
+        };
+
+        var titleRow = new DockPanel { Margin = new Thickness(14, 0, 6, 0) };
+        var wordmark = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        wordmark.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 15,
+            FontWeight = FontWeights.Bold,
+            Foreground = fg,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        wordmark.Children.Add(new TextBlock
+        {
+            Text = "loading",
+            Margin = new Thickness(10, 0, 0, 0),
+            Padding = new Thickness(8, 2, 8, 2),
+            FontSize = 11,
+            Foreground = muted,
+            Background = BrushFrom("#f7f6f3"),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var controls = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        controls.Children.Add(ChromeButton("─", () => WindowState = WindowState.Minimized));
+        controls.Children.Add(ChromeButton("✕", () => HideOrClose(), isClose: true));
+        DockPanel.SetDock(controls, Dock.Right);
+        titleRow.Children.Add(controls);
+        titleRow.Children.Add(wordmark);
+        titleBar.Child = titleRow;
+
+        var spinner = new Ellipse
+        {
+            Width = 28,
+            Height = 28,
+            StrokeThickness = 3,
+            Stroke = muted,
+        };
+        var dash = new Ellipse
+        {
+            Width = 28,
+            Height = 28,
+            StrokeThickness = 3,
+            Stroke = fg,
+            StrokeDashArray = new DoubleCollection { 0.35, 0.65 },
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = new RotateTransform(),
+        };
+        var spin = new DoubleAnimation(0, 360, TimeSpan.FromSeconds(0.9))
+        {
+            RepeatBehavior = RepeatBehavior.Forever,
+        };
+        dash.RenderTransform.BeginAnimation(RotateTransform.AngleProperty, spin);
+
+        var spinnerHost = new Grid { Width = 28, Height = 28, Margin = new Thickness(0, 0, 0, 14) };
+        spinnerHost.Children.Add(spinner);
+        spinnerHost.Children.Add(dash);
+
+        var body = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        body.Children.Add(spinnerHost);
+        body.Children.Add(new TextBlock
+        {
+            Tag = "hint",
+            Text = "Starting AgentR…",
+            FontSize = 13,
+            Foreground = muted,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+
+        var grid = new Grid { Background = bg };
+        grid.Children.Add(body);
+        grid.Children.Add(titleBar);
+
+        return new Border
+        {
+            Child = grid,
+            Background = bg,
+        };
+    }
+
+    private static Button ChromeButton(string label, Action click, bool isClose = false)
+    {
+        var btn = new Button
+        {
+            Content = label,
+            Width = 40,
+            Height = 32,
+            FontSize = 12,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = isClose ? BrushFrom("#1a1917") : BrushFrom("#8a857c"),
+            Cursor = Cursors.Hand,
+            Focusable = false,
+        };
+        btn.Click += (_, _) => click();
+        return btn;
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current is not null)
+        {
+            if (current is T match) return match;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    private static SolidColorBrush BrushFrom(string hex) =>
+        (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!;
 
     private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -128,9 +386,7 @@ internal sealed class WebViewHostWindow : Window
             var method = methodEl.GetString() ?? "";
             object?[] args = [];
             if (root.TryGetProperty("args", out var argsEl) && argsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
                 args = argsEl.EnumerateArray().Select(a => (object?)a.Clone()).ToArray();
-            }
 
             try
             {
@@ -156,7 +412,6 @@ internal sealed class WebViewHostWindow : Window
 
     private object? BeginDrag()
     {
-        // Win32 caption drag works from async webview messages; WPF DragMove often does not.
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == IntPtr.Zero) return null;
         ReleaseCapture();
@@ -172,32 +427,37 @@ internal sealed class WebViewHostWindow : Window
 
     private object? HideOrClose()
     {
-        if (_hideOnClose)
-            Hide();
-        else
-            Close();
+        _wantVisible = false;
+        if (_hideOnClose) Hide();
+        else Close();
         return null;
     }
 
     public void Post(object payload)
     {
-        if (!_ready || _webView.CoreWebView2 is null) return;
+        // Bridge must work during page load — do not wait for the loader to hide.
+        if (!_bridgeReady || _webView.CoreWebView2 is null) return;
         var json = System.Text.Json.JsonSerializer.Serialize(payload, JsonUi.Options);
-        Dispatcher.Invoke(() =>
+        void Send()
         {
             try { _webView.CoreWebView2?.PostWebMessageAsJson(json); }
             catch { /* ignore */ }
-        });
+        }
+        if (Dispatcher.CheckAccess()) Send();
+        else Dispatcher.Invoke(Send);
     }
-
-    public void Minimize() => WindowState = WindowState.Minimized;
 
     public void ShowAndActivate()
     {
+        _wantVisible = true;
+        Opacity = 1;
+        ShowInTaskbar = true;
+        ShowActivated = true;
         if (WindowState == WindowState.Minimized)
             WindowState = WindowState.Normal;
         Show();
         Activate();
+        EnsureInitStarted();
     }
 
     [DllImport("user32.dll")]

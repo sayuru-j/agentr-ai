@@ -34,6 +34,10 @@ internal sealed class TrayApplication : IDisposable
         StartWorker();
         RebuildMenu();
 
+        // Warm WebView2 + settings UI in the background so the first tray open is instant.
+        _ = WebViewHostWindow.WarmEnvironmentAsync();
+        EnsureSettingsWindow(preloadHidden: true);
+
         var config = WorkerConfigStore.Load();
         var needsSetup =
             string.IsNullOrWhiteSpace(config.WorkerToken) ||
@@ -53,29 +57,39 @@ internal sealed class TrayApplication : IDisposable
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            if (_settings is not null)
-            {
-                _settings.ShowAndActivate();
-                BroadcastStatus();
-                return;
-            }
-
-            _settings = new WebViewHostWindow(
-                "AgentR",
-                UiPaths.SettingsHtml,
-                width: 440,
-                height: 760,
-                minWidth: 380,
-                minHeight: 560,
-                // Match titlebar fill so any residual non-client gap is invisible.
-                background: "#ffffff",
-                invoke: HandleBridgeAsync,
-                hideOnClose: true);
-            _settings.Closed += (_, _) => _settings = null;
-            _settings.Show();
+            EnsureSettingsWindow(preloadHidden: false);
+            _settings!.ShowAndActivate();
             BroadcastStatus();
         });
     }
+
+    private void EnsureSettingsWindow(bool preloadHidden)
+    {
+        if (_settings is not null)
+        {
+            if (preloadHidden && !_settings.IsVisible && !_settings.IsReady)
+                _settings.PreloadHidden();
+            return;
+        }
+
+        _settings = CreateSettingsWindow();
+        _settings.Closed += (_, _) => _settings = null;
+        _settings.UiReady += () => Application.Current.Dispatcher.Invoke(BroadcastStatus);
+        if (preloadHidden)
+            _settings.PreloadHidden();
+    }
+
+    private WebViewHostWindow CreateSettingsWindow() =>
+        new(
+            "AgentR",
+            UiPaths.SettingsHtml,
+            width: 440,
+            height: 760,
+            minWidth: 380,
+            minHeight: 560,
+            background: "#ffffff",
+            invoke: HandleBridgeAsync,
+            hideOnClose: true);
 
     public void SetSessionLocked(bool locked)
     {
