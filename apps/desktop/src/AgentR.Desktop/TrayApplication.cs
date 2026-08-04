@@ -72,7 +72,8 @@ internal sealed class TrayApplication : IDisposable
                 height: 760,
                 minWidth: 380,
                 minHeight: 560,
-                background: "#f7f6f3",
+                // Match titlebar fill so any residual non-client gap is invisible.
+                background: "#ffffff",
                 invoke: HandleBridgeAsync);
             _settings.Closed += (_, _) => _settings = null;
             _settings.Show();
@@ -165,7 +166,8 @@ internal sealed class TrayApplication : IDisposable
                 height: 480,
                 minWidth: 420,
                 minHeight: 280,
-                background: "#0c0d0f",
+                // Match console bar fill so any residual non-client gap is invisible.
+                background: "#16181c",
                 invoke: HandleBridgeAsync);
             _console.Closed += (_, _) => _console = null;
         }
@@ -322,8 +324,7 @@ internal sealed class TrayApplication : IDisposable
             "openUpdate" => OpenUpdate(),
             "reconnect" => Reconnect(),
             "pickFolder" => PickFolder(),
-            "windowMinimize" => MinimizeActive(),
-            "windowClose" => CloseActive(),
+            // windowMinimize / windowClose / windowDrag are handled by WebViewHostWindow.
             _ => throw new InvalidOperationException($"Unknown bridge method: {method}"),
         };
     }
@@ -411,21 +412,6 @@ internal sealed class TrayApplication : IDisposable
             UseDescriptionForTitle = true,
         };
         return dlg.ShowDialog() == DialogResult.OK ? dlg.SelectedPath : null;
-    }
-
-    private object? MinimizeActive()
-    {
-        if (_settings is { IsActive: true }) _settings.Minimize();
-        else if (_console is { IsActive: true }) _console.Minimize();
-        else _settings?.Minimize();
-        return null;
-    }
-
-    private object? CloseActive()
-    {
-        if (_console is { IsActive: true }) _console.Close();
-        else _settings?.Close();
-        return null;
     }
 
     private object ExportConfig()

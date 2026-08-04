@@ -1,6 +1,8 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Shell;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -8,7 +10,10 @@ namespace AgentR.Desktop;
 
 internal sealed class WebViewHostWindow : Window
 {
-    private readonly WebView2 _webView = new();
+    private const int WmNcLButtonDown = 0xA1;
+    private const int HtCaption = 0x2;
+
+    private readonly WebView2 _webView = new() { Margin = new Thickness(0) };
     private readonly string _htmlPath;
     private readonly Func<string, object?[], Task<object?>> _invoke;
     private bool _ready;
@@ -30,10 +35,23 @@ internal sealed class WebViewHostWindow : Window
         MinHeight = minHeight;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.CanResize;
+        SnapsToDevicePixels = true;
+        UseLayoutRounding = true;
         Background = (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(background)!;
         Content = _webView;
         _htmlPath = htmlPath;
         _invoke = invoke;
+
+        // Kill the default caption strip that shows above frameless + resizable windows.
+        WindowChrome.SetWindowChrome(this, new WindowChrome
+        {
+            CaptionHeight = 0,
+            CornerRadius = new CornerRadius(0),
+            GlassFrameThickness = new Thickness(0),
+            ResizeBorderThickness = new Thickness(6),
+            UseAeroCaptionButtons = false,
+        });
+
         Loaded += async (_, _) => await InitAsync();
     }
 
@@ -76,26 +94,46 @@ internal sealed class WebViewHostWindow : Window
 
             try
             {
-                var result = await _invoke(method, args).ConfigureAwait(true);
-                Post(new
+                var result = method switch
                 {
-                    id,
-                    result,
-                });
+                    "windowDrag" => BeginDrag(),
+                    "windowMinimize" => MinimizeAndAck(),
+                    "windowClose" => CloseAndAck(),
+                    _ => await _invoke(method, args).ConfigureAwait(true),
+                };
+                Post(new { id, result });
             }
             catch (Exception ex)
             {
-                Post(new
-                {
-                    id,
-                    error = ex.Message,
-                });
+                Post(new { id, error = ex.Message });
             }
         }
         catch
         {
             // ignore malformed messages
         }
+    }
+
+    private object? BeginDrag()
+    {
+        // Win32 caption drag works from async webview messages; WPF DragMove often does not.
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return null;
+        ReleaseCapture();
+        SendMessage(hwnd, WmNcLButtonDown, (IntPtr)HtCaption, IntPtr.Zero);
+        return null;
+    }
+
+    private object? MinimizeAndAck()
+    {
+        WindowState = WindowState.Minimized;
+        return null;
+    }
+
+    private object? CloseAndAck()
+    {
+        Close();
+        return null;
     }
 
     public void Post(object payload)
@@ -110,6 +148,12 @@ internal sealed class WebViewHostWindow : Window
     }
 
     public void Minimize() => WindowState = WindowState.Minimized;
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 }
 
 internal static class AgentrBridgeScript
@@ -181,6 +225,7 @@ internal static class AgentrBridgeScript
     openUpdate: () => invoke('openUpdate'),
     reconnect: () => invoke('reconnect'),
     pickFolder: () => invoke('pickFolder'),
+    windowDrag: () => invoke('windowDrag'),
     windowMinimize: () => invoke('windowMinimize'),
     windowClose: () => invoke('windowClose'),
     onStatus: (cb) => { statusCbs.push(cb); return unsub(statusCbs, cb); },
@@ -188,6 +233,20 @@ internal static class AgentrBridgeScript
     onConsoleLog: (cb) => { consoleLogCbs.push(cb); return unsub(consoleLogCbs, cb); },
     onConsoleEnd: (cb) => { consoleEndCbs.push(cb); return unsub(consoleEndCbs, cb); },
   };
+
+  function wireDrag(root) {
+    if (!root) return;
+    root.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('button, a, input, select, textarea, label, .titlebar-controls, .bar-controls, [data-no-drag]')) return;
+      window.agentr.windowDrag();
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    wireDrag(document.querySelector('.titlebar-drag') || document.querySelector('.titlebar'));
+    wireDrag(document.querySelector('.bar-drag') || document.querySelector('.bar'));
+  });
 })();
 """;
 }
