@@ -53,16 +53,11 @@ internal sealed class TrayApplication : IDisposable
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            if (_settings is { IsVisible: true })
-            {
-                _settings.Activate();
-                return;
-            }
-
             if (_settings is not null)
             {
-                try { _settings.Close(); } catch { /* ignore */ }
-                _settings = null;
+                _settings.ShowAndActivate();
+                BroadcastStatus();
+                return;
             }
 
             _settings = new WebViewHostWindow(
@@ -74,7 +69,8 @@ internal sealed class TrayApplication : IDisposable
                 minHeight: 560,
                 // Match titlebar fill so any residual non-client gap is invisible.
                 background: "#ffffff",
-                invoke: HandleBridgeAsync);
+                invoke: HandleBridgeAsync,
+                hideOnClose: true);
             _settings.Closed += (_, _) => _settings = null;
             _settings.Show();
             BroadcastStatus();
@@ -168,12 +164,12 @@ internal sealed class TrayApplication : IDisposable
                 minHeight: 280,
                 // Match console bar fill so any residual non-client gap is invisible.
                 background: "#16181c",
-                invoke: HandleBridgeAsync);
+                invoke: HandleBridgeAsync,
+                hideOnClose: true);
             _console.Closed += (_, _) => _console = null;
         }
 
-        _console.Show();
-        _console.Activate();
+        _console.ShowAndActivate();
         _console.Post(new
         {
             type = "console:init",
@@ -516,7 +512,7 @@ internal sealed class TrayApplication : IDisposable
             _notifyIcon.Dispose();
         }
         _trayIconImage?.Dispose();
-        try { _settings?.Close(); } catch { /* ignore */ }
-        try { _console?.Close(); } catch { /* ignore */ }
+        try { _settings?.ForceClose(); } catch { /* ignore */ }
+        try { _console?.ForceClose(); } catch { /* ignore */ }
     }
 }

@@ -13,10 +13,15 @@ internal sealed class WebViewHostWindow : Window
     private const int WmNcLButtonDown = 0xA1;
     private const int HtCaption = 0x2;
 
+    private static CoreWebView2Environment? SharedEnvironment;
+    private static readonly SemaphoreSlim EnvLock = new(1, 1);
+
     private readonly WebView2 _webView = new() { Margin = new Thickness(0) };
     private readonly string _htmlPath;
     private readonly Func<string, object?[], Task<object?>> _invoke;
+    private readonly bool _hideOnClose;
     private bool _ready;
+    private bool _forceClose;
 
     public WebViewHostWindow(
         string title,
@@ -26,7 +31,8 @@ internal sealed class WebViewHostWindow : Window
         double minWidth,
         double minHeight,
         string background,
-        Func<string, object?[], Task<object?>> invoke)
+        Func<string, object?[], Task<object?>> invoke,
+        bool hideOnClose = true)
     {
         Title = title;
         Width = width;
@@ -41,6 +47,7 @@ internal sealed class WebViewHostWindow : Window
         Content = _webView;
         _htmlPath = htmlPath;
         _invoke = invoke;
+        _hideOnClose = hideOnClose;
 
         // Kill the default caption strip that shows above frameless + resizable windows.
         WindowChrome.SetWindowChrome(this, new WindowChrome
@@ -52,14 +59,47 @@ internal sealed class WebViewHostWindow : Window
             UseAeroCaptionButtons = false,
         });
 
+        Closing += OnClosing;
         Loaded += async (_, _) => await InitAsync();
     }
 
     public bool IsReady => _ready;
 
+    /// <summary>Destroy the window for real (app shutdown).</summary>
+    public void ForceClose()
+    {
+        _forceClose = true;
+        Close();
+    }
+
+    private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_hideOnClose && !_forceClose)
+        {
+            e.Cancel = true;
+            Hide();
+        }
+    }
+
+    private static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync()
+    {
+        if (SharedEnvironment is not null) return SharedEnvironment;
+        await EnvLock.WaitAsync().ConfigureAwait(true);
+        try
+        {
+            SharedEnvironment ??= await CoreWebView2Environment.CreateAsync().ConfigureAwait(true);
+            return SharedEnvironment;
+        }
+        finally
+        {
+            EnvLock.Release();
+        }
+    }
+
     private async Task InitAsync()
     {
-        var env = await CoreWebView2Environment.CreateAsync().ConfigureAwait(true);
+        if (_ready) return;
+        var env = await GetSharedEnvironmentAsync().ConfigureAwait(true);
         await _webView.EnsureCoreWebView2Async(env).ConfigureAwait(true);
         _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
@@ -98,7 +138,7 @@ internal sealed class WebViewHostWindow : Window
                 {
                     "windowDrag" => BeginDrag(),
                     "windowMinimize" => MinimizeAndAck(),
-                    "windowClose" => CloseAndAck(),
+                    "windowClose" => HideOrClose(),
                     _ => await _invoke(method, args).ConfigureAwait(true),
                 };
                 Post(new { id, result });
@@ -130,9 +170,12 @@ internal sealed class WebViewHostWindow : Window
         return null;
     }
 
-    private object? CloseAndAck()
+    private object? HideOrClose()
     {
-        Close();
+        if (_hideOnClose)
+            Hide();
+        else
+            Close();
         return null;
     }
 
@@ -148,6 +191,14 @@ internal sealed class WebViewHostWindow : Window
     }
 
     public void Minimize() => WindowState = WindowState.Minimized;
+
+    public void ShowAndActivate()
+    {
+        if (WindowState == WindowState.Minimized)
+            WindowState = WindowState.Normal;
+        Show();
+        Activate();
+    }
 
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
