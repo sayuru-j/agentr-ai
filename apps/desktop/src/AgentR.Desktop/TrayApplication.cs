@@ -26,17 +26,17 @@ internal sealed class TrayApplication : IDisposable
     private bool _disposed;
 
     private Icon? _trayIconImage;
+    private CancellationTokenSource? _uiCoalesceCts;
 
     public void Start()
     {
         EnsureDefaultConfig();
         CreateTray();
         StartWorker();
-        RebuildMenu();
+        ScheduleUiRefresh();
 
-        // Warm WebView2 + settings UI in the background so the first tray open is instant.
+        // Warm WebView2 env (writable LocalAppData UDF) — no Opacity=0 window preload.
         _ = WebViewHostWindow.WarmEnvironmentAsync();
-        EnsureSettingsWindow(preloadHidden: true);
 
         var config = WorkerConfigStore.Load();
         var needsSetup =
@@ -57,26 +57,19 @@ internal sealed class TrayApplication : IDisposable
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            EnsureSettingsWindow(preloadHidden: false);
+            EnsureSettingsWindow();
             _settings!.ShowAndActivate();
             BroadcastStatus();
         });
     }
 
-    private void EnsureSettingsWindow(bool preloadHidden)
+    private void EnsureSettingsWindow()
     {
-        if (_settings is not null)
-        {
-            if (preloadHidden && !_settings.IsVisible && !_settings.IsReady)
-                _settings.PreloadHidden();
-            return;
-        }
+        if (_settings is not null) return;
 
         _settings = CreateSettingsWindow();
         _settings.Closed += (_, _) => _settings = null;
         _settings.UiReady += () => Application.Current.Dispatcher.Invoke(BroadcastStatus);
-        if (preloadHidden)
-            _settings.PreloadHidden();
     }
 
     private WebViewHostWindow CreateSettingsWindow() =>
@@ -95,7 +88,7 @@ internal sealed class TrayApplication : IDisposable
     {
         _sessionLocked = locked;
         _worker?.UpdateSessionLock(locked);
-        RebuildMenu();
+        ScheduleUiRefresh();
     }
 
     private void StartWorker()
@@ -107,24 +100,24 @@ internal sealed class TrayApplication : IDisposable
         _worker.StatusChanged += s =>
         {
             _status = s;
-            Application.Current.Dispatcher.Invoke(RebuildMenu);
+            Application.Current.Dispatcher.Invoke(ScheduleUiRefresh);
         };
         _worker.PairingCodeChanged += code =>
         {
             _pairingCode = code;
-            Application.Current.Dispatcher.Invoke(RebuildMenu);
+            Application.Current.Dispatcher.Invoke(ScheduleUiRefresh);
         };
         _worker.PairedUsersChanged += count =>
         {
             _pairedUsers = count;
-            Application.Current.Dispatcher.Invoke(RebuildMenu);
+            Application.Current.Dispatcher.Invoke(ScheduleUiRefresh);
         };
         _worker.ConnectionChanged += hint =>
         {
             _connectionHint = hint;
             Application.Current.Dispatcher.Invoke(() =>
             {
-                BroadcastStatus();
+                ScheduleUiRefresh();
                 if (hint is ConnectionRePair)
                 {
                     ShowBalloon("AgentR — re-pair needed", ((ConnectionRePair)hint).Message);
@@ -201,6 +194,28 @@ internal sealed class TrayApplication : IDisposable
             Icon = _trayIconImage,
         };
         _notifyIcon.DoubleClick += (_, _) => OpenSettings();
+    }
+
+    private void ScheduleUiRefresh()
+    {
+        _uiCoalesceCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _uiCoalesceCts = cts;
+        _ = CoalesceUiRefreshAsync(cts.Token);
+    }
+
+    private async Task CoalesceUiRefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(120, ct).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        if (ct.IsCancellationRequested) return;
+        RebuildMenu();
     }
 
     private void RebuildMenu()
@@ -498,6 +513,8 @@ internal sealed class TrayApplication : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        try { _uiCoalesceCts?.Cancel(); } catch { /* ignore */ }
+        _uiCoalesceCts?.Dispose();
         _worker?.Stop();
         if (_notifyIcon is not null)
         {

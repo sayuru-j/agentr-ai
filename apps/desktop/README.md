@@ -7,6 +7,8 @@ Windows tray app that hosts the C# worker in-process and reuses the existing HTM
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually already on Windows 10/11)
 
+WebView2 profile data is stored under `%LOCALAPPDATA%\AgentR\WebView2` (required so `dotnet run` / installed builds can write the user-data folder).
+
 ## Build / run
 
 ```powershell

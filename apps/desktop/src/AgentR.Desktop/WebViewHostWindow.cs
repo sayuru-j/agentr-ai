@@ -42,7 +42,6 @@ internal sealed class WebViewHostWindow : Window
     private bool _uiReady;
     private bool _forceClose;
     private bool _initStarted;
-    private bool _wantVisible;
 
     public WebViewHostWindow(
         string title,
@@ -109,7 +108,6 @@ internal sealed class WebViewHostWindow : Window
         {
             e.Cancel = true;
             Hide();
-            _wantVisible = false;
         }
     }
 
@@ -120,31 +118,17 @@ internal sealed class WebViewHostWindow : Window
         _ = InitAsync();
     }
 
-    /// <summary>Warm WebView behind the scenes without activating the window.</summary>
-    public void PreloadHidden()
+    public static string UserDataFolder
     {
-        _wantVisible = false;
-        ShowActivated = false;
-        ShowInTaskbar = false;
-        Opacity = 0;
-        Show();
-        EnsureInitStarted();
-        _ = FinishPreloadAsync();
-    }
-
-    private async Task FinishPreloadAsync()
-    {
-        try { await WhenReady.ConfigureAwait(true); }
-        catch { /* keep going */ }
-
-        // If the user opened the window while we were preloading, leave it alone.
-        if (_wantVisible) return;
-        if (Opacity > 0.01 && IsVisible) return;
-
-        Hide();
-        Opacity = 1;
-        ShowInTaskbar = true;
-        ShowActivated = true;
+        get
+        {
+            var path = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AgentR",
+                "WebView2");
+            Directory.CreateDirectory(path);
+            return path;
+        }
     }
 
     private static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync()
@@ -153,7 +137,11 @@ internal sealed class WebViewHostWindow : Window
         await EnvLock.WaitAsync().ConfigureAwait(true);
         try
         {
-            SharedEnvironment ??= await CoreWebView2Environment.CreateAsync().ConfigureAwait(true);
+            if (SharedEnvironment is not null) return SharedEnvironment;
+            // Must be a writable path — default (next to host/`dotnet.exe`) causes E_ACCESSDENIED.
+            SharedEnvironment = await CoreWebView2Environment
+                .CreateAsync(browserExecutableFolder: null, userDataFolder: UserDataFolder)
+                .ConfigureAwait(true);
             return SharedEnvironment;
         }
         finally
@@ -162,6 +150,7 @@ internal sealed class WebViewHostWindow : Window
         }
     }
 
+    /// <summary>Warm the shared WebView2 environment at tray startup (no window).</summary>
     public static Task WarmEnvironmentAsync() => GetSharedEnvironmentAsync();
 
     private async Task InitAsync()
@@ -201,8 +190,20 @@ internal sealed class WebViewHostWindow : Window
         catch (Exception ex)
         {
             _readyTcs.TrySetException(ex);
-            SetLoaderError(ex.Message);
+            SetLoaderError(FormatInitError(ex));
         }
+    }
+
+    private static string FormatInitError(Exception ex)
+    {
+        var msg = ex.Message;
+        if (msg.Contains("0x80070005", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("Access is denied", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WebView2 access denied. Install Evergreen WebView2 Runtime, or ensure " +
+                   @"%LOCALAPPDATA%\AgentR\WebView2 is writable.";
+        }
+        return "WebView2 failed: " + msg;
     }
 
     private void SetLoaderError(string message)
@@ -216,7 +217,10 @@ internal sealed class WebViewHostWindow : Window
                 {
                     if (c is TextBlock tb && Equals(tb.Tag, "hint"))
                     {
-                        tb.Text = "Failed to load UI: " + message;
+                        tb.Text = message;
+                        tb.TextWrapping = TextWrapping.Wrap;
+                        tb.MaxWidth = 360;
+                        tb.TextAlignment = TextAlignment.Center;
                         return;
                     }
                 }
@@ -455,7 +459,6 @@ internal sealed class WebViewHostWindow : Window
 
     private object? HideOrClose()
     {
-        _wantVisible = false;
         if (_hideOnClose) Hide();
         else Close();
         return null;
@@ -477,10 +480,6 @@ internal sealed class WebViewHostWindow : Window
 
     public void ShowAndActivate()
     {
-        _wantVisible = true;
-        Opacity = 1;
-        ShowInTaskbar = true;
-        ShowActivated = true;
         if (WindowState == WindowState.Minimized)
             WindowState = WindowState.Normal;
         Show();
