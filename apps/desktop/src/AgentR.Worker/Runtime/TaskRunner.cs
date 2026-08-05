@@ -224,21 +224,10 @@ public sealed class TaskRunner
         try
         {
             var cmd = Agents.AgentCommandResolver.StripQuotes(command) ?? command;
-            var psi = new ProcessStartInfo
-            {
-                FileName = cmd,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in backend == AgentBackend.Codex ? new[] { "exec", "--help" } : new[] { "--help" })
-                psi.ArgumentList.Add(a);
-            using var p = Process.Start(psi);
-            if (p is null) return "";
-            var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-            p.WaitForExit(8000);
-            return text;
+            var args = backend == AgentBackend.Codex
+                ? (IReadOnlyList<string>)["exec", "--help"]
+                : ["--help"];
+            return Agents.AgentProcessLauncher.RunCapturing(cmd, args);
         }
         catch { return ""; }
     }
@@ -504,19 +493,7 @@ public static class CursorCli
         try
         {
             var cmd = Agents.AgentCommandResolver.StripQuotes(command) ?? command;
-            var psi = new ProcessStartInfo
-            {
-                FileName = cmd,
-                ArgumentList = { "--help" },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var p = Process.Start(psi);
-            if (p is null) return false;
-            var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-            p.WaitForExit(8000);
+            var text = Agents.AgentProcessLauncher.RunCapturing(cmd, ["--help"]);
             return text.Contains(flag, StringComparison.Ordinal);
         }
         catch { return false; }
@@ -609,20 +586,7 @@ public static class CodexCli
     {
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = cmd,
-                ArgumentList = { "exec", "--help" },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var p = Process.Start(psi);
-            if (p is null) return "";
-            var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-            p.WaitForExit(8000);
-            return text;
+            return Agents.AgentProcessLauncher.RunCapturing(cmd, ["exec", "--help"]);
         }
         catch { return ""; }
     }

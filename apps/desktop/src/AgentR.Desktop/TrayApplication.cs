@@ -27,6 +27,11 @@ internal sealed class TrayApplication : IDisposable
 
     private Icon? _trayIconImage;
     private CancellationTokenSource? _uiCoalesceCts;
+    private string? _consoleTaskId;
+    private string? _consolePrompt;
+    private string? _consoleCwd;
+    private readonly List<object> _consoleLogBuffer = new();
+    private const int ConsoleLogBufferMax = 500;
 
     public void Start()
     {
@@ -144,13 +149,11 @@ internal sealed class TrayApplication : IDisposable
         _worker.Log += line => Debug.WriteLine($"[tray] {line}");
         _worker.Error += ex => Debug.WriteLine($"[tray] {ex.Message}");
         _worker.TaskStarted += (id, prompt, cwd) =>
-            Application.Current.Dispatcher.Invoke(() => OpenConsole(id, prompt, cwd));
+            Application.Current.Dispatcher.Invoke(() => OnTaskStarted(id, prompt, cwd));
         _worker.TaskLogReceived += (id, stream, chunk) =>
-            Application.Current.Dispatcher.Invoke(() =>
-                _console?.Post(new { type = "console:log", payload = new { taskId = id, stream, chunk } }));
+            Application.Current.Dispatcher.Invoke(() => OnTaskLog(id, stream, chunk));
         _worker.TaskEnded += (id, exitCode) =>
-            Application.Current.Dispatcher.Invoke(() =>
-                _console?.Post(new { type = "console:end", payload = new { taskId = id, exitCode } }));
+            Application.Current.Dispatcher.Invoke(() => OnTaskEnded(id, exitCode));
 
         _worker.Start();
         _pairingCode = _worker.PairingCode;
@@ -158,7 +161,53 @@ internal sealed class TrayApplication : IDisposable
         _status = _worker.Status;
     }
 
-    private void OpenConsole(string taskId, string prompt, string cwd)
+    private void OnTaskStarted(string taskId, string prompt, string cwd)
+    {
+        _consoleTaskId = taskId;
+        _consolePrompt = prompt;
+        _consoleCwd = cwd;
+        _consoleLogBuffer.Clear();
+        // Console stays hidden unless the user already opened it (or opens from tray).
+        if (_console is { IsVisible: true })
+            PostConsoleInit();
+    }
+
+    private void OnTaskLog(string taskId, string stream, string chunk)
+    {
+        var payload = new { type = "console:log", payload = new { taskId, stream, chunk } };
+        if (_console is { IsVisible: true })
+            _console.Post(payload);
+        else
+        {
+            _consoleLogBuffer.Add(payload);
+            if (_consoleLogBuffer.Count > ConsoleLogBufferMax)
+                _consoleLogBuffer.RemoveRange(0, _consoleLogBuffer.Count - ConsoleLogBufferMax);
+        }
+    }
+
+    private void OnTaskEnded(string taskId, int exitCode)
+    {
+        var payload = new { type = "console:end", payload = new { taskId, exitCode } };
+        if (_console is { IsVisible: true })
+            _console.Post(payload);
+        else
+            _consoleLogBuffer.Add(payload);
+    }
+
+    private void PostConsoleInit()
+    {
+        if (_console is null || _consoleTaskId is null) return;
+        _console.Post(new
+        {
+            type = "console:init",
+            payload = new { taskId = _consoleTaskId, prompt = _consolePrompt, cwd = _consoleCwd },
+        });
+        foreach (var msg in _consoleLogBuffer)
+            _console.Post(msg);
+        _consoleLogBuffer.Clear();
+    }
+
+    private void OpenConsole()
     {
         if (_console is null)
         {
@@ -169,19 +218,16 @@ internal sealed class TrayApplication : IDisposable
                 height: 480,
                 minWidth: 420,
                 minHeight: 280,
-                // Match console bar fill so any residual non-client gap is invisible.
                 background: "#16181c",
                 invoke: HandleBridgeAsync,
                 hideOnClose: true);
             _console.Closed += (_, _) => _console = null;
+            _console.UiReady += () => Application.Current.Dispatcher.Invoke(PostConsoleInit);
         }
 
         _console.ShowAndActivate();
-        _console.Post(new
-        {
-            type = "console:init",
-            payload = new { taskId, prompt, cwd },
-        });
+        if (_console.IsReady)
+            PostConsoleInit();
     }
 
     private void CreateTray()
@@ -236,6 +282,7 @@ internal sealed class TrayApplication : IDisposable
         }));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Open AgentR…", null, (_, _) => OpenSettings()));
+        menu.Items.Add(new ToolStripMenuItem("Agent console…", null, (_, _) => OpenConsole()));
         menu.Items.Add(new ToolStripMenuItem("Reconnect", null, (_, _) => _worker?.Reconnect()));
         menu.Items.Add(new ToolStripMenuItem(updateLabel, null, async (_, _) =>
         {

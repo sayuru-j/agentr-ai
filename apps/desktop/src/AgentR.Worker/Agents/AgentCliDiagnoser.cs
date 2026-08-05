@@ -74,20 +74,8 @@ public static class AgentCliDiagnoser
     {
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = cmd,
-                ArgumentList = { "--version" },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return "";
-            var text = (p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd()).Trim();
-            p.WaitForExit(8000);
-            return text.Split('\n')[0].Trim();
+            var text = AgentProcessLauncher.RunCapturing(cmd, ["--version"]).Trim();
+            return string.IsNullOrEmpty(text) ? "" : text.Split('\n')[0].Trim();
         }
         catch { return ""; }
     }
@@ -96,21 +84,10 @@ public static class AgentCliDiagnoser
     {
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = cmd,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in backend == AgentBackend.Codex ? new[] { "exec", "--help" } : new[] { "--help" })
-                psi.ArgumentList.Add(a);
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return "";
-            var text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-            p.WaitForExit(8000);
-            return text;
+            var args = backend == AgentBackend.Codex
+                ? (IReadOnlyList<string>)["exec", "--help"]
+                : ["--help"];
+            return AgentProcessLauncher.RunCapturing(cmd, args);
         }
         catch { return ""; }
     }

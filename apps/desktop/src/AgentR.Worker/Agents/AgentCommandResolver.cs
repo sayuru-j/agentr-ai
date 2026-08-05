@@ -206,6 +206,21 @@ public static class WindowsCmdQuoting
             return trimmed;
         return "\"" + trimmed.Replace("\"", "\"\"") + "\"";
     }
+
+    /// <summary>
+    /// Build a <c>cmd.exe /d /s /c</c> argument string for a command + args.
+    /// Uses the classic Windows double-quote wrap so paths with spaces survive
+    /// cmd's <c>/c</c> quote-stripping rules (without this, <c>C:\Users\Foo Bar\x.cmd</c>
+    /// becomes <c>'C:\Users\Foo'</c>).
+    /// </summary>
+    public static string BuildCmdCArguments(string command, IEnumerable<string> args)
+    {
+        var parts = new List<string> { Quote(command) };
+        parts.AddRange(args.Select(Quote));
+        var inner = string.Join(' ', parts);
+        // Result: /d /s /c ""C:\path with spaces\agent.cmd" --help"
+        return "/d /s /c \"" + inner + "\"";
+    }
 }
 
 public static class AgentProcessLauncher
@@ -219,18 +234,15 @@ public static class AgentProcessLauncher
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = false,
+            CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
 
-        // Windows .cmd paths with spaces: invoke via cmd.exe /c with quoted args
         if (OperatingSystem.IsWindows())
         {
             psi.FileName = "cmd.exe";
-            var quoted = new List<string> { "/d", "/c", WindowsCmdQuoting.Quote(command) };
-            quoted.AddRange(args.Select(WindowsCmdQuoting.Quote));
-            psi.Arguments = string.Join(' ', quoted);
+            psi.Arguments = WindowsCmdQuoting.BuildCmdCArguments(command, args);
         }
         else
         {
@@ -241,5 +253,38 @@ public static class AgentProcessLauncher
         var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         if (!proc.Start()) throw new InvalidOperationException("Failed to start agent process");
         return proc;
+    }
+
+    /// <summary>Run the agent CLI briefly and capture combined stdout/stderr.</summary>
+    public static string RunCapturing(string agentCommand, IReadOnlyList<string> args, int timeoutMs = 8000)
+    {
+        var command = AgentCommandResolver.StripQuotes(agentCommand) ?? agentCommand;
+        var psi = new ProcessStartInfo
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+
+        if (OperatingSystem.IsWindows())
+        {
+            psi.FileName = "cmd.exe";
+            psi.Arguments = WindowsCmdQuoting.BuildCmdCArguments(command, args);
+        }
+        else
+        {
+            psi.FileName = command;
+            foreach (var a in args) psi.ArgumentList.Add(a);
+        }
+
+        using var p = Process.Start(psi);
+        if (p is null) return "";
+        var stdout = p.StandardOutput.ReadToEnd();
+        var stderr = p.StandardError.ReadToEnd();
+        p.WaitForExit(timeoutMs);
+        return stdout + stderr;
     }
 }
